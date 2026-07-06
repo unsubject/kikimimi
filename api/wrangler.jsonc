@@ -15,11 +15,13 @@
     "run_worker_first": ["/api/*", "/audio/*"]
   },
 
-  // Daily drop fires at 07:00 America/New_York. Cloudflare cron is UTC-only,
-  // so we schedule both 11:00 and 12:00 UTC and the handler checks NY local time
-  // (handles EST/EDT). The 00:xx run is a daily housekeeping slot.
+  // Daily drop fires at the learner's configured local drop_time (default 07:00
+  // America/New_York). Cloudflare cron is UTC-only, so we run hourly and the
+  // handler delivers on the first tick at/after the local drop hour (see
+  // isDropDue); the once-per-day guard keeps it to a single delivery, and a
+  // failed attempt is retried on the next hourly tick.
   "triggers": {
-    "crons": ["0 11 * * *", "0 12 * * *"]
+    "crons": ["0 * * * *"]
   },
 
   "r2_buckets": [

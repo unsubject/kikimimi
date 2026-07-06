@@ -53,6 +53,14 @@ export function Talk() {
     })();
   }, []);
 
+  // Stop bot audio when leaving the tab (the bare Audio element outlives render).
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
   // Kick off the conversation within a user gesture, so the opener audio auto-plays.
   const start = async () => {
     if (!itemId) return;
@@ -109,7 +117,11 @@ export function Talk() {
     return (
       <div className="card">
         <strong>会話</strong>
-        <p className="muted">今日の項目が届いたら会話を始められます。</p>
+        {error ? (
+          <div className="banner stop">{error}</div>
+        ) : (
+          <p className="muted">今日の項目が届いたら会話を始められます。</p>
+        )}
       </div>
     );
   }

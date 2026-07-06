@@ -8,7 +8,7 @@ import type {
   GauntletItem,
   GauntletResult,
 } from "@kikimimi/shared";
-import { api, audioUrl, ApiError } from "../api.js";
+import { api, audioUrl, isHttpUrl, ApiError } from "../api.js";
 import { Player } from "../components/Player.js";
 
 /**
@@ -32,12 +32,6 @@ const STAGE_JP: Record<number, string> = {
   2: "S2 · 音声＋文",
   3: "S3 · 音声のみ",
 };
-
-/** Render a stored link only if it's an http(s) URL (defence-in-depth vs a
- * javascript: value; the server already rejects non-http(s) on write). */
-function isHttpUrl(u: string): boolean {
-  return /^https?:\/\//i.test(u);
-}
 
 export function Progress() {
   const [data, setData] = useState<ProgressResponse | null>(null);

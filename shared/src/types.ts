@@ -50,15 +50,6 @@ export interface Item {
   created_at: string;
 }
 
-export interface LearnerStateRow {
-  skill: Skill;
-  level: number;
-  scaffold_stage: ScaffoldStage;
-  trailing_scores: number[];
-  stage_entered_at: string;
-  updated_at: string;
-}
-
 export interface UserSettings {
   tz: string;
   drop_time: string; // "07:00"
@@ -71,8 +62,6 @@ export interface UserSettings {
 /** Candidate TTS voices for the Sprint-1 pick (spec §13 open item). */
 export type TtsVoice = "nova" | "shimmer" | "coral";
 export const TTS_VOICES: TtsVoice[] = ["nova", "shimmer", "coral"];
-
-export type ResponseMode = "explain_back_text" | "explain_back_voice";
 
 export interface CostSummary {
   today_usd: number;

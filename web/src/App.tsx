@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { hasToken, setToken } from "./api.js";
+import { hasToken, setToken, ensureAudioToken } from "./api.js";
 import { Today } from "./views/Today.js";
 import { Practice } from "./views/Practice.js";
 import { Review } from "./views/Review.js";
@@ -17,6 +17,7 @@ export function App() {
 
   useEffect(() => {
     void registerServiceWorker();
+    void ensureAudioToken(); // warm the audio token so audio plays without a round-trip
   }, []);
 
   if (!ready) return <TokenGate onSaved={() => setReady(true)} />;
@@ -80,6 +81,7 @@ function TokenGate({ onSaved }: { onSaved: () => void }) {
         disabled={!value.trim()}
         onClick={() => {
           setToken(value);
+          void ensureAudioToken(); // mint an audio token now that we have a bearer token
           onSaved();
         }}
       >

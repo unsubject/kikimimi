@@ -22,6 +22,7 @@ import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
 import { conversationOpener, conversationTurn } from "../converse.js";
 import { glossWord } from "../gloss.js";
 import { computeProgress } from "../progress.js";
+import { mintAudioToken, timingSafeEqual } from "../audiotoken.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -46,6 +47,25 @@ const isHttpUrl = (u: string): boolean => {
   }
 };
 
+/** Valid IANA time zone? Constructing a formatter throws RangeError on a bad zone. */
+const isValidTz = (tz: string): boolean => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** "HH:MM", 24-hour. */
+const isDropTime = (s: string): boolean => /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+
+/** Max chars of learner text we forward to the grader (bounds per-call token cost). */
+const GRADE_TEXT_MAX = 4000;
+
+/** Signed audio-token lifetime: long enough to cover a session, short vs. the master token. */
+const AUDIO_TOKEN_TTL_SEC = 12 * 3600;
+
 type Vars = { sql: ReturnType<typeof openDb> };
 
 export const api = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -54,7 +74,7 @@ export const api = new Hono<{ Bindings: Env; Variables: Vars }>();
 api.use("*", async (c, next) => {
   const auth = c.req.header("authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "");
-  if (!c.env.APP_TOKEN || token !== c.env.APP_TOKEN) {
+  if (!c.env.APP_TOKEN || !timingSafeEqual(token, c.env.APP_TOKEN)) {
     return c.json({ error: "unauthorized" }, 401);
   }
   await next();
@@ -69,6 +89,17 @@ api.use("*", async (c, next) => {
   } finally {
     await closeDb(sql);
   }
+});
+
+// Turn unhandled throws into clean JSON, not a bare 500: a malformed JSON body
+// (SyntaxError) and a non-UUID id (Postgres 22P02) are client errors → 400;
+// anything else is logged server-side and returned as a generic 500 with no
+// stack or DB detail leaked to the client.
+api.onError((err, c) => {
+  if (err instanceof SyntaxError) return c.json({ error: "invalid JSON body" }, 400);
+  if ((err as { code?: string }).code === "22P02") return c.json({ error: "invalid id" }, 400);
+  console.error("api error:", err);
+  return c.json({ error: "internal error" }, 500);
 });
 
 const TZ = async (sql: Vars["sql"]): Promise<string> => {
@@ -92,6 +123,37 @@ async function budgetGate(
   }
   return null;
 }
+
+/** Insert one grade into `evaluations` — shared by explain-back (text/voice) and the gauntlet. */
+async function recordEvaluation(
+  sql: Vars["sql"],
+  responseId: string,
+  grade: { score: number; missed_points: string[]; feedback: string },
+  model: string,
+): Promise<void> {
+  await sql`
+    insert into evaluations (response_id, score, missed_points, feedback, model)
+    values (${responseId}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
+            ${grade.feedback}, ${model})`;
+}
+
+/** Log a graded error and harvest it into an SRS cloze card, when one was found. */
+async function maybeHarvestError(
+  sql: Vars["sql"],
+  itemId: string,
+  category: string | null,
+  detail: string | null,
+): Promise<void> {
+  if (!category || !detail) return;
+  await sql`
+    insert into error_log (category, detail, item_id)
+    values (${category}, ${detail}, ${itemId})`;
+  await harvestError(sql, itemId, category, detail);
+}
+
+/** Push subscriptions stored on the settings row, defensively coerced to an array. */
+const subsOf = (row: Record<string, unknown> | undefined): PushSubscriptionJSON[] =>
+  Array.isArray(row?.push_subs) ? (row!.push_subs as PushSubscriptionJSON[]) : [];
 
 type AudioBlobResult =
   | { audio: ArrayBuffer; mime: string }
@@ -118,6 +180,15 @@ async function readAudioBlob(entry: unknown): Promise<AudioBlobResult> {
 /** VAPID public key for the client to subscribe with. */
 api.get("/config", (c) =>
   c.json({ vapidPublicKey: c.env.VAPID_PUBLIC_KEY, voices: TTS_VOICES }),
+);
+
+/**
+ * Mint a short-lived signed token for the /audio proxy. The client uses this in
+ * the audio `?t=` query so the long-lived master token never lands in a URL
+ * (and thus never in CDN logs, history, or Cache Storage).
+ */
+api.get("/audio-token", async (c) =>
+  c.json(await mintAudioToken(c.env.APP_TOKEN, AUDIO_TOKEN_TTL_SEC)),
 );
 
 /** Today view: most recent delivered item + its scaffold stage + cost banner. */
@@ -193,22 +264,12 @@ api.post("/explain-back", async (c) => {
       gist_zh: String(item.gist_zh ?? ""),
       explain_back_prompt: String(item.explain_back_prompt ?? ""),
     },
-    body.text,
+    body.text.slice(0, GRADE_TEXT_MAX),
   );
   await logCost(sql, tz, "explain_back_grade", usd);
-
-  await sql`
-    insert into evaluations (response_id, score, missed_points, feedback, model)
-    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
-            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
-
-  if (grade.error_category && grade.error_detail) {
-    await sql`
-      insert into error_log (category, detail, item_id)
-      values (${grade.error_category}, ${grade.error_detail}, ${body.item_id})`;
-    // A corrected mistake becomes an SRS cloze card (spec §5, §8).
-    await harvestError(sql, body.item_id, grade.error_category, grade.error_detail);
-  }
+  await recordEvaluation(sql, String(resp!.id), grade, c.env.GRADING_MODEL);
+  // A corrected mistake becomes an SRS cloze card (spec §5, §8).
+  await maybeHarvestError(sql, body.item_id, grade.error_category, grade.error_detail);
 
   // Explain-back is the listening comprehension signal → drives graduation.
   const transition = await recordScore(sql, "listening", grade.score);
@@ -266,18 +327,8 @@ api.post("/explain-back/voice", async (c) => {
     transcript,
   );
   await logCost(sql, tz, "explain_back_grade", usd);
-
-  await sql`
-    insert into evaluations (response_id, score, missed_points, feedback, model)
-    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
-            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
-
-  if (grade.error_category && grade.error_detail) {
-    await sql`
-      insert into error_log (category, detail, item_id)
-      values (${grade.error_category}, ${grade.error_detail}, ${itemId})`;
-    await harvestError(sql, itemId, grade.error_category, grade.error_detail);
-  }
+  await recordEvaluation(sql, String(resp!.id), grade, c.env.GRADING_MODEL);
+  await maybeHarvestError(sql, itemId, grade.error_category, grade.error_detail);
 
   const transition = await recordScore(sql, "listening", grade.score);
 
@@ -330,12 +381,41 @@ api.get("/settings", async (c) => {
 api.put("/settings", async (c) => {
   const sql = c.get("sql");
   const b = await c.req.json<Record<string, unknown>>();
+
+  // Validate every provided field before it persists. In particular a bad `tz`
+  // would throw in every later Intl call (TZ/readSpend/cron) and brick the app;
+  // a non-numeric cap or unknown voice would break /review and daily-drop TTS.
+  if (b.tz !== undefined && !(typeof b.tz === "string" && isValidTz(b.tz))) {
+    return c.json({ error: "invalid tz" }, 400);
+  }
+  if (b.drop_time !== undefined && !(typeof b.drop_time === "string" && isDropTime(b.drop_time))) {
+    return c.json({ error: "invalid drop_time (expected HH:MM)" }, 400);
+  }
+  if (b.tts_voice !== undefined && !(TTS_VOICES as string[]).includes(String(b.tts_voice))) {
+    return c.json({ error: "invalid tts_voice" }, 400);
+  }
+  let cap: number | undefined;
+  if (b.srs_daily_cap !== undefined) {
+    cap = Number(b.srs_daily_cap);
+    if (!Number.isInteger(cap) || cap < 1 || cap > 500) {
+      return c.json({ error: "srs_daily_cap must be an integer 1-500" }, 400);
+    }
+  }
+  if (
+    b.interest_weights !== undefined &&
+    (typeof b.interest_weights !== "object" ||
+      b.interest_weights === null ||
+      Array.isArray(b.interest_weights))
+  ) {
+    return c.json({ error: "invalid interest_weights" }, 400);
+  }
+
   const [cur] = await sql`select * from user_settings where id = 1`;
   const next = {
     tz: b.tz ?? cur!.tz,
     drop_time: b.drop_time ?? cur!.drop_time,
     interest_weights: b.interest_weights ?? cur!.interest_weights,
-    srs_daily_cap: b.srs_daily_cap ?? cur!.srs_daily_cap,
+    srs_daily_cap: cap ?? Number(cur!.srs_daily_cap),
     tts_voice: b.tts_voice ?? cur!.tts_voice,
   };
   await sql`
@@ -365,10 +445,13 @@ api.post("/push/subscribe", async (c) => {
   if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
     return c.json({ error: "invalid subscription" }, 400);
   }
+  // Real push services are https; requiring it blocks using the stored endpoint
+  // (via /push/test) as a request-forgery probe against arbitrary hosts.
+  if (!/^https:\/\//i.test(sub.endpoint)) {
+    return c.json({ error: "endpoint must be https" }, 400);
+  }
   const [s] = await sql`select push_subs from user_settings where id = 1`;
-  const subs: PushSubscriptionJSON[] = Array.isArray(s?.push_subs)
-    ? (s!.push_subs as PushSubscriptionJSON[])
-    : [];
+  const subs = subsOf(s);
   const deduped = subs.filter((x) => x.endpoint !== sub.endpoint);
   deduped.push(sub);
   await sql`update user_settings set push_subs = ${JSON.stringify(deduped)} where id = 1`;
@@ -379,9 +462,7 @@ api.post("/push/subscribe", async (c) => {
 api.post("/push/test", async (c) => {
   const sql = c.get("sql");
   const [s] = await sql`select push_subs from user_settings where id = 1`;
-  const subs: PushSubscriptionJSON[] = Array.isArray(s?.push_subs)
-    ? (s!.push_subs as PushSubscriptionJSON[])
-    : [];
+  const subs = subsOf(s);
   const results = await Promise.all(
     subs.map((sub) =>
       sendPush(c.env, sub, {
@@ -553,13 +634,10 @@ api.post("/gauntlet/grade", async (c) => {
       gist_zh: String(item.gist_zh ?? ""),
       explain_back_prompt: String(item.explain_back_prompt ?? ""),
     },
-    body.text,
+    body.text.slice(0, GRADE_TEXT_MAX),
   );
   await logCost(sql, tz, "gauntlet_grade", usd);
-  await sql`
-    insert into evaluations (response_id, score, missed_points, feedback, model)
-    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
-            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
+  await recordEvaluation(sql, String(resp!.id), grade, c.env.GRADING_MODEL);
 
   // The gauntlet is a listening assessment → feeds the listening skill.
   await recordScore(sql, "listening", grade.score);
@@ -741,12 +819,7 @@ api.post("/talk", async (c) => {
   );
   await logCost(sql, tz, "conversation", usd);
 
-  if (reply.error_category && reply.error_detail) {
-    await sql`
-      insert into error_log (category, detail, item_id)
-      values (${reply.error_category}, ${reply.error_detail}, ${itemId})`;
-    await harvestError(sql, itemId, reply.error_category, reply.error_detail);
-  }
+  await maybeHarvestError(sql, itemId, reply.error_category, reply.error_detail);
 
   // A transient TTS failure must not discard the already-paid reply or (via client
   // retry) double-bill + double-harvest — return the reply with a null key (P1/§4).

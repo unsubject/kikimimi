@@ -24,7 +24,9 @@ const FALLBACK_SENTENCES = [
 ];
 
 export function Shadow() {
-  const [sentences, setSentences] = useState<string[]>(FALLBACK_SENTENCES);
+  // Start empty (not with the fallback) so we don't synthesize a fallback
+  // sentence on mount only to immediately replace it once today's item loads.
+  const [sentences, setSentences] = useState<string[]>([]);
   const [idx, setIdx] = useState(0);
   const [sentenceKey, setSentenceKey] = useState<string | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
@@ -40,16 +42,16 @@ export function Shadow() {
     api
       .today()
       .then((t) => {
-        if (t.item) {
-          const parts = t.item.script_jp
-            .split(/(?<=。)/)
-            .map((s) => s.trim())
-            .filter((s) => s.length > 1);
-          if (parts.length) setSentences(parts);
-        }
+        const parts = t.item
+          ? t.item.script_jp
+              .split(/(?<=。)/)
+              .map((s) => s.trim())
+              .filter((s) => s.length > 1)
+          : [];
+        setSentences(parts.length ? parts : FALLBACK_SENTENCES);
       })
       .catch(() => {
-        /* keep fallback sentences */
+        setSentences(FALLBACK_SENTENCES);
       });
   }, []);
 
@@ -122,6 +124,7 @@ export function Shadow() {
         <p className="muted" style={{ fontSize: 13 }}>
           まず耳だけで真似しましょう。モーラ・長音・促音に注目。文はあとで確認できます。
         </p>
+        {sentences.length === 0 && <p className="muted">読み込み中…</p>}
         {ttsLoading && <p className="muted">音声を準備中…</p>}
         {!ttsLoading && sentenceKey && <Player src={audioUrl(sentenceKey)} />}
         {!ttsLoading && !sentenceKey && ttsError && (

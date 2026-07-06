@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReviewCard, SrsRating } from "@kikimimi/shared";
 import { api, ApiError } from "../api.js";
 import { useTts } from "../useTts.js";
@@ -23,6 +23,10 @@ export function Review() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(0);
+  const [grading, setGrading] = useState(false);
+  // Synchronous re-entrancy guard: a double-tap in one tick must not grade the
+  // same card twice (which also skips the next card) — state updates are async.
+  const gradingRef = useRef(false);
   // On'yomi cards are about the *reading* — let the learner hear it (listening-first).
   const { play, loading: ttsLoading } = useTts();
 
@@ -50,7 +54,9 @@ export function Review() {
   const current = cards[idx];
 
   const grade = async (rating: SrsRating) => {
-    if (!current) return;
+    if (!current || gradingRef.current) return;
+    gradingRef.current = true;
+    setGrading(true);
     try {
       await api.gradeCard(current.id, rating);
     } catch {
@@ -63,6 +69,8 @@ export function Review() {
     } else {
       setIdx(cards.length); // finished
     }
+    gradingRef.current = false;
+    setGrading(false);
   };
 
   if (loading) return <p className="muted">読み込み中…</p>;
@@ -128,7 +136,12 @@ export function Review() {
             </div>
             <div className="drill-choices">
               {RATINGS.map((r) => (
-                <button key={r.rating} className={`rate-${r.cls}`} onClick={() => grade(r.rating)}>
+                <button
+                  key={r.rating}
+                  className={`rate-${r.cls}`}
+                  onClick={() => grade(r.rating)}
+                  disabled={grading}
+                >
                   {r.label}
                 </button>
               ))}

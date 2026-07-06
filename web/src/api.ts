@@ -16,6 +16,7 @@ import type {
   Deliverable,
   GauntletItem,
   GauntletResult,
+  PushSubscriptionJSON,
 } from "@kikimimi/shared";
 
 /**
@@ -51,6 +52,21 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** POST multipart/form-data with the bearer header (the audio/voice routes).
+ * Mirrors `req` but leaves the browser to set the multipart content-type. */
+async function reqForm<T>(path: string, form: FormData, failMsg: string): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${getToken()}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(body.error ?? failMsg, res.status);
+  }
+  return res.json() as Promise<T>;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -58,6 +74,55 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+// --- Signed audio token -----------------------------------------------------
+// Audio elements can't send an Authorization header, so /audio is reached with a
+// `?t=` token. We use a SHORT-LIVED signed token (minted by /audio-token), never
+// the master bearer token, so the master credential never lands in a URL (and
+// thus not in CDN logs, history, or Cache Storage). Cached in localStorage and
+// refreshed in the background before expiry.
+const AUDIO_TOK_KEY = "kikimimi_audio_tok";
+let audioTok: { token: string; exp: number } | null = loadAudioTok();
+let audioTokInflight: Promise<void> | null = null;
+
+function loadAudioTok(): { token: string; exp: number } | null {
+  try {
+    const raw = localStorage.getItem(AUDIO_TOK_KEY);
+    return raw ? (JSON.parse(raw) as { token: string; exp: number }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ensure a fresh audio token is cached (fetches one if missing/near expiry). */
+export async function ensureAudioToken(): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  if (audioTok && audioTok.exp - now > 3600) return; // still >1h of life
+  if (!audioTokInflight) {
+    audioTokInflight = req<{ token: string; exp: number }>("/audio-token")
+      .then((t) => {
+        audioTok = t;
+        try {
+          localStorage.setItem(AUDIO_TOK_KEY, JSON.stringify(t));
+        } catch {
+          /* ignore quota / private mode */
+        }
+      })
+      .catch(() => {
+        /* keep any old token; audio may 401 until the next attempt */
+      })
+      .finally(() => {
+        audioTokInflight = null;
+      });
+  }
+  return audioTokInflight;
+}
+
+/** True for http(s) URLs only — guard server-supplied links before using them as
+ * an href/src (defence-in-depth vs a javascript: value). */
+export function isHttpUrl(u: string): boolean {
+  return /^https?:\/\//i.test(u);
 }
 
 export const api = {
@@ -78,39 +143,21 @@ export const api = {
     req<{ key: string }>("/tts", { method: "POST", body: JSON.stringify({ text }) }),
   onyomi: () => req<{ rules: OnyomiRule[] }>("/onyomi"),
   seedOnyomi: () => req<{ added: number }>("/onyomi/seed", { method: "POST" }),
-  shadow: async (targetText: string, audio: Blob) => {
+  shadow: (targetText: string, audio: Blob) => {
     const form = new FormData();
     form.append("target_text", targetText);
     form.append("audio", audio, "shadow.webm");
-    const res = await fetch("/api/shadow", {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}` },
-      body: form,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new ApiError(body.error ?? "shadow failed", res.status);
-    }
-    return res.json() as Promise<{ grade: ShadowGrade; transcript: string }>;
+    return reqForm<{ grade: ShadowGrade; transcript: string }>("/shadow", form, "shadow failed");
   },
   // POST: the opener has a paid, non-idempotent side effect (Sonnet on a cache miss).
   talkOpener: (itemId: string) =>
     req<OpenerResponse>(`/talk/opener?item_id=${encodeURIComponent(itemId)}`, { method: "POST" }),
-  talk: async (itemId: string, audio: Blob, history: TalkTurn[]) => {
+  talk: (itemId: string, audio: Blob, history: TalkTurn[]) => {
     const form = new FormData();
     form.append("item_id", itemId);
     form.append("history", JSON.stringify(history));
     form.append("audio", audio, "talk.webm");
-    const res = await fetch("/api/talk", {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}` },
-      body: form,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new ApiError(body.error ?? "talk failed", res.status);
-    }
-    return res.json() as Promise<TalkResponse>;
+    return reqForm<TalkResponse>("/talk", form, "talk failed");
   },
   gloss: (word: string, context: string) =>
     req<GlossResponse>("/gloss", { method: "POST", body: JSON.stringify({ word, context }) }),
@@ -122,25 +169,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ rating }),
     }),
-  explainBackVoice: async (itemId: string, audio: Blob) => {
+  explainBackVoice: (itemId: string, audio: Blob) => {
     const form = new FormData();
     form.append("item_id", itemId);
     form.append("audio", audio, "voice.webm");
-    const res = await fetch("/api/explain-back/voice", {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}` },
-      body: form,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new ApiError(body.error ?? "voice failed", res.status);
-    }
-    return res.json() as Promise<{
+    return reqForm<{
       grade: { score: number; feedback: string; missed_points: string[] };
       transcript: string;
       transition: { action: string; toStage: number } | null;
       cost: TodayResponse["cost"];
-    }>;
+    }>("/explain-back/voice", form, "voice failed");
   },
   settings: () => req<{ settings: UserSettings }>("/settings"),
   saveSettings: (s: Partial<UserSettings>) =>
@@ -162,7 +200,13 @@ export const api = {
     }),
 };
 
-/** Build an audio URL that carries the token (audio elements can't set headers). */
+/** Build an audio URL carrying the short-lived signed audio token. */
 export function audioUrl(key: string): string {
-  return `/audio/${key}?t=${encodeURIComponent(getToken())}`;
+  const now = Math.floor(Date.now() / 1000);
+  if (!audioTok || audioTok.exp - now <= 60) void ensureAudioToken(); // refresh in background
+  return `/audio/${key}?t=${encodeURIComponent(audioTok?.token ?? "")}`;
 }
+
+// Warm the audio token as early as possible so the first audio render has it
+// (also refreshed on app mount and after the token is set — see App/TokenGate).
+if (hasToken()) void ensureAudioToken();

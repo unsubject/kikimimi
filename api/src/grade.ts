@@ -80,5 +80,9 @@ export async function gradeExplainBack(
     maxTokens: 1024,
   });
 
-  return { grade: result.data, usd: result.usd };
+  // Forced tool use does not hard-enforce the schema's 0-100 bound, so clamp
+  // before the score reaches evaluations / pass-fail / the learner model.
+  const grade = result.data;
+  grade.score = Math.max(0, Math.min(100, Math.round(grade.score)));
+  return { grade, usd: result.usd };
 }

@@ -7,7 +7,9 @@
 export {};
 declare const self: ServiceWorkerGlobalScope;
 
-const CACHE = "kikimimi-v1";
+// Bump this on a strategy change so `activate` purges the previous cache (the
+// old v1 cached HTML cache-first, which froze the app at first install).
+const CACHE = "kikimimi-v2";
 const APP_SHELL = ["/", "/index.html", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -69,7 +71,12 @@ self.addEventListener("notificationclick", (event) => {
  * Fetch strategy:
  *  - API calls: network-only (never cache authed JSON).
  *  - Audio: cache-first (re-listen offline).
- *  - App shell / assets: cache-first with network fallback.
+ *  - Navigations / HTML: NETWORK-FIRST — cache-first HTML with a constant cache
+ *    key froze the installed PWA at its first-installed version, since the
+ *    cached shell kept pointing at old hashed assets. Network-first means a new
+ *    deploy is always picked up online; the cached shell is only the offline
+ *    fallback.
+ *  - Content-hashed static assets (immutable): cache-first.
  */
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
@@ -78,6 +85,14 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/audio/")) {
     event.respondWith(cacheFirst(event.request, true));
+    return;
+  }
+  if (
+    event.request.mode === "navigate" ||
+    url.pathname === "/" ||
+    url.pathname.endsWith(".html")
+  ) {
+    event.respondWith(networkFirst(event.request));
     return;
   }
   event.respondWith(cacheFirst(event.request, false));
@@ -96,5 +111,19 @@ async function cacheFirst(request: Request, storeOpaque: boolean): Promise<Respo
   } catch {
     const shell = await caches.match("/index.html");
     return shell ?? new Response("offline", { status: 503 });
+  }
+}
+
+async function networkFirst(request: Request): Promise<Response> {
+  try {
+    const res = await fetch(request);
+    if (res.ok) {
+      const cache = await caches.open(CACHE);
+      void cache.put("/index.html", res.clone()); // refresh the offline shell
+    }
+    return res;
+  } catch {
+    const cached = (await caches.match(request)) ?? (await caches.match("/index.html"));
+    return cached ?? new Response("offline", { status: 503 });
   }
 }

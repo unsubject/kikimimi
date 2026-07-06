@@ -4,7 +4,8 @@ import { api } from "./routes/api.js";
 import { openDb, closeDb } from "./db.js";
 import { runPipeline } from "./content/pipeline.js";
 import { sendPush } from "./push.js";
-import { isDropHour } from "./time.js";
+import { isDropDue } from "./time.js";
+import { verifyAudioToken, isAudioToken, timingSafeEqual } from "./audiotoken.js";
 import type { PushSubscriptionJSON } from "@kikimimi/shared";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -13,15 +14,18 @@ app.route("/api", api);
 
 /**
  * Audio proxy. R2 objects are served through the Worker so we don't expose a
- * public bucket; the app token gates access via query param (audio elements
- * can't send Authorization headers). Spec §2: "public bucket behind
- * Worker-signed URLs" — here the Worker is the gate.
+ * public bucket. Audio elements can't send Authorization headers, so access is
+ * granted by a `?t=` query token — a short-lived HMAC audio token (spec §2
+ * "Worker-signed URLs"), with the raw master token accepted only as a fallback
+ * for direct/programmatic use. The client always uses the signed token so the
+ * master credential never lands in a logged/cached URL.
  */
 app.get("/audio/:key{.+}", async (c) => {
-  const token = c.req.query("t");
-  if (!c.env.APP_TOKEN || token !== c.env.APP_TOKEN) {
-    return c.text("unauthorized", 401);
-  }
+  const token = c.req.query("t") ?? "";
+  const ok = isAudioToken(token)
+    ? await verifyAudioToken(c.env.APP_TOKEN, token)
+    : !!c.env.APP_TOKEN && timingSafeEqual(token, c.env.APP_TOKEN);
+  if (!ok) return c.text("unauthorized", 401);
   const key = c.req.param("key");
   const obj = await c.env.AUDIO.get(key);
   if (!obj) return c.text("not found", 404);
@@ -45,14 +49,17 @@ async function runDailyDrop(env: Env): Promise<void> {
     const tz = String(settings?.tz ?? "America/New_York");
     const dropTime = String(settings?.drop_time ?? "07:00");
 
-    // Cron fires at 11:00 and 12:00 UTC; only proceed at the one that is the
-    // configured local drop hour (handles EST/EDT).
-    if (!isDropHour(new Date(), tz, dropTime)) return;
+    // The cron runs hourly; deliver once the local time reaches the configured
+    // drop hour. The once-per-day guard below means only the first qualifying
+    // tick actually delivers, so any drop_time (not just 07:00) is honoured.
+    if (!isDropDue(new Date(), tz, dropTime)) return;
 
-    // Skip if we already delivered today (idempotent against the double cron).
+    // Skip if we already delivered today (idempotent against retries / hourly
+    // re-fires). The double `at time zone` yields the correct tz-local midnight
+    // as a timestamptz, so the day boundary is the learner's local day.
     const [already] = await sql`
       select 1 from deliveries
-      where delivered_at >= date_trunc('day', now() at time zone ${tz})
+      where delivered_at >= (date_trunc('day', now() at time zone ${tz}) at time zone ${tz})
       limit 1`;
     if (already) return;
 
@@ -89,6 +96,11 @@ async function runDailyDrop(env: Env): Promise<void> {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runDailyDrop(env));
+    // Log (don't swallow silently) so a failed drop is visible; because the
+    // once-per-day guard only trips after a *successful* delivery, the next
+    // hourly tick re-attempts the drop — automatic same-day retry.
+    ctx.waitUntil(
+      runDailyDrop(env).catch((err) => console.error("daily drop failed:", err)),
+    );
   },
 } satisfies ExportedHandler<Env>;

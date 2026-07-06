@@ -3,6 +3,7 @@ import type { Env } from "../env.js";
 import type { Sql } from "../db.js";
 import { checkGovernor, logCost, readSpend, ttsCostUsd } from "../cost.js";
 import { synthesize } from "../tts.js";
+import { currentVoice } from "../ttscache.js";
 import { fetchSource, SOURCES, type Candidate } from "./sources.js";
 import { selectItem } from "./select.js";
 import { generateItem } from "./generate.js";
@@ -34,7 +35,7 @@ export async function runPipeline(
 
   const [settings] = await sql`select * from user_settings where id = 1`;
   const weights = settings?.interest_weights as InterestWeights;
-  const voice = (settings?.tts_voice as Item["source"]) ?? "nova";
+  const voice = await currentVoice(sql); // allow-list validated (never a raw stored string)
 
   const [listening] = await sql`select level from learner_state where skill = 'listening'`;
   const [reading] = await sql`select level from learner_state where skill = 'reading'`;
@@ -71,7 +72,7 @@ export async function runPipeline(
   let audioKey: string | null = null;
   let ttsUsd = 0;
   try {
-    const audio = await synthesize(env, gen.item.script_jp, voice as never);
+    const audio = await synthesize(env, gen.item.script_jp, voice);
     audioKey = `items/${crypto.randomUUID()}.mp3`;
     await env.AUDIO.put(audioKey, audio, {
       httpMetadata: { contentType: "audio/mpeg" },
@@ -83,28 +84,37 @@ export async function runPipeline(
     audioKey = null;
   }
 
-  const [row] = await sql`
-    insert into items (
-      source, url, category, title_jp, script_jp, furigana, gist_zh,
-      vocab, grammar_tags, level, jlpt_profile, explain_back_prompt, probes, audio_r2_key
-    ) values (
-      ${chosen.source}, ${chosen.url}, ${chosen.category},
-      ${gen.item.title_jp}, ${gen.item.script_jp},
-      ${JSON.stringify(gen.item.furigana)}, ${gen.item.gist_zh},
-      ${JSON.stringify(gen.item.vocab)}, ${JSON.stringify(gen.item.grammar_tags)},
-      ${level}, ${JSON.stringify(jlptProfile(gen.item.vocab))},
-      ${gen.item.explain_back_prompt}, ${JSON.stringify(gen.item.probes)}, ${audioKey}
-    ) returning *`;
-
-  // New vocab auto-enters the SRS deck as unlearned (spec §3.5, §5).
-  await harvestVocab(sql, String(row!.id), gen.item.vocab);
-
   // Deliver at the learner's current listening scaffold stage.
   const [ls] = await sql`select scaffold_stage from learner_state where skill = 'listening'`;
-  const stage = (Number(ls?.scaffold_stage ?? 1) as ScaffoldStage);
-  await sql`insert into deliveries (item_id, stage) values (${row!.id}, ${stage})`;
+  const stage = Number(ls?.scaffold_stage ?? 1) as ScaffoldStage;
 
-  return { item: rowToItem(row!), reason: undefined, usd: gen.usd + ttsUsd };
+  // Write the item and its delivery ATOMICALLY: a mid-write failure must not
+  // leave an item with no delivery row — that item would be invisible to /today
+  // while the daily-drop idempotency guard (which keys on deliveries) wouldn't
+  // see it either, so the next cron would generate (and pay for) a duplicate.
+  const row = (await sql.begin(async (tx) => {
+    const [r] = await tx`
+      insert into items (
+        source, url, category, title_jp, script_jp, furigana, gist_zh,
+        vocab, grammar_tags, level, jlpt_profile, explain_back_prompt, probes, audio_r2_key
+      ) values (
+        ${chosen.source}, ${chosen.url}, ${chosen.category},
+        ${gen.item.title_jp}, ${gen.item.script_jp},
+        ${JSON.stringify(gen.item.furigana)}, ${gen.item.gist_zh},
+        ${JSON.stringify(gen.item.vocab)}, ${JSON.stringify(gen.item.grammar_tags)},
+        ${level}, ${JSON.stringify(jlptProfile(gen.item.vocab))},
+        ${gen.item.explain_back_prompt}, ${JSON.stringify(gen.item.probes)}, ${audioKey}
+      ) returning *`;
+    if (!r) throw new Error("item insert returned no row");
+    await tx`insert into deliveries (item_id, stage) values (${r.id}, ${stage})`;
+    return r;
+  })) as Record<string, unknown>;
+
+  // New vocab auto-enters the SRS deck as unlearned (spec §3.5, §5). Non-critical
+  // and idempotent (deduped), so it stays outside the item/delivery transaction.
+  await harvestVocab(sql, String(row.id), gen.item.vocab);
+
+  return { item: rowToItem(row), reason: undefined, usd: gen.usd + ttsUsd };
 }
 
 function jlptProfile(vocab: { jlpt: string }[]): Record<string, number> {

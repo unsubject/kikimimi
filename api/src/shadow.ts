@@ -58,5 +58,8 @@ export async function gradeShadowing(
     schema: SHADOW_SCHEMA,
     maxTokens: 512,
   });
-  return { grade: result.data, usd: result.usd };
+  // Clamp: the schema's 0-100 bound is a hint, not a guarantee (forced tool use).
+  const grade = result.data;
+  grade.score = Math.max(0, Math.min(100, Math.round(grade.score)));
+  return { grade, usd: result.usd };
 }
