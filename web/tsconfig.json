@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+  // The service worker is typechecked separately (WebWorker lib, no DOM) via
+  // tsconfig.sw.json — its `self` is a ServiceWorkerGlobalScope, not Window.
+  "include": ["src", "scripts"],
+  "exclude": ["src/sw.ts"]
+}

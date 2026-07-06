@@ -1,0 +1,56 @@
+// Cloudflare Worker config for Kikimimi.
+// One Worker serves both the API (Hono) and the built PWA (static assets from ../web/dist).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kikimimi",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Built PWA. `run_worker_first` keeps /api/* and /audio/* on the Worker.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/audio/*"]
+  },
+
+  // Daily drop fires at 07:00 America/New_York. Cloudflare cron is UTC-only,
+  // so we schedule both 11:00 and 12:00 UTC and the handler checks NY local time
+  // (handles EST/EDT). The 00:xx run is a daily housekeeping slot.
+  "triggers": {
+    "crons": ["0 11 * * *", "0 12 * * *"]
+  },
+
+  "r2_buckets": [
+    {
+      "binding": "AUDIO",
+      "bucket_name": "kikimimi-audio"
+    }
+  ],
+
+  // Postgres (Railway) via Hyperdrive. Create with:
+  //   npx wrangler hyperdrive create kikimimi-db --connection-string="postgres://..."
+  // then paste the returned id below.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "REPLACE_WITH_HYPERDRIVE_ID",
+      "localConnectionString": "postgres://postgres:postgres@localhost:5432/kikimimi"
+    }
+  ],
+
+  "vars": {
+    "GENERATION_MODEL": "claude-sonnet-4-6",
+    "GRADING_MODEL": "claude-haiku-4-5",
+    "APP_ORIGIN": "https://kikimimi.example.workers.dev"
+  }
+
+  // Secrets (set with `npx wrangler secret put NAME`):
+  //   APP_TOKEN          — single-user bearer token (any long random string)
+  //   ANTHROPIC_API_KEY  — script generation / grading
+  //   OPENAI_API_KEY     — TTS (tts-1) and later Whisper
+  //   VAPID_PUBLIC_KEY   — base64url uncompressed P-256 point (npm run gen:vapid -w api)
+  //   VAPID_PRIVATE_KEY  — base64url 32-byte private scalar
+  //   VAPID_SUBJECT      — mailto:you@example.com
+}
