@@ -37,7 +37,7 @@
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
-      "id": "REPLACE_WITH_HYPERDRIVE_ID",
+      "id": "3224cd9d10364d9eb96ee7f3b4fbdb4a",
       "localConnectionString": "postgres://postgres:postgres@localhost:5432/kikimimi"
     }
   ],
