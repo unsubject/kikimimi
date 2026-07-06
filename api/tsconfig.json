@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  // Only the Worker source is typechecked against workers-types. Tests run
+  // under Node via vitest (Node's webcrypto types differ from the Workers
+  // ones); vitest transpiles them and they are exercised at runtime.
+  "include": ["src"]
+}

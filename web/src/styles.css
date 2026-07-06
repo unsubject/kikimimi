@@ -1,0 +1,360 @@
+:root {
+  --bg: #1b1b1f;
+  --surface: #26262c;
+  --surface-2: #303038;
+  --text: #ececf1;
+  --muted: #a0a0ad;
+  --accent: #e8a33d; /* amber — the "listening ear" */
+  --accent-2: #6bbf8a;
+  --danger: #d9724f;
+  --radius: 14px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px calc(88px + env(safe-area-inset-bottom));
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+button.primary {
+  background: var(--accent);
+  color: #1b1b1f;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 20px 4px 8px;
+}
+
+.app-header h1 {
+  font-size: 22px;
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.app-header .sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin: 14px 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+/* Player */
+.player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.speeds button {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.speeds button.on {
+  background: var(--accent);
+  color: #1b1b1f;
+}
+
+/* Japanese body with ruby + tap-to-reveal */
+.jp-body {
+  font-size: 20px;
+  line-height: 2.1;
+  margin: 8px 0;
+}
+ruby rt {
+  font-size: 0.5em;
+  color: var(--muted);
+}
+.furi-hidden rt {
+  visibility: hidden;
+}
+
+.zh-reveal {
+  margin-top: 10px;
+}
+.zh-reveal summary {
+  cursor: pointer;
+  color: var(--accent);
+  list-style: none;
+  font-size: 14px;
+}
+.zh-reveal summary::-webkit-details-marker {
+  display: none;
+}
+.zh-reveal .zh {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.vocab {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.vocab .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--surface-2);
+  padding-bottom: 6px;
+}
+.vocab .w {
+  font-size: 17px;
+}
+.vocab .r {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 90px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid #3a3a44;
+  border-radius: 10px;
+  padding: 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.grade {
+  border-left: 3px solid var(--accent-2);
+  padding-left: 12px;
+  margin-top: 12px;
+}
+.grade .score {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+/* Cost banners */
+.banner {
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.banner.warn {
+  background: #3a2f1a;
+  color: #e8c98a;
+}
+.banner.stop {
+  background: #3a1f18;
+  color: #eaa189;
+}
+
+/* Bottom nav */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-around;
+  background: var(--surface);
+  border-top: 1px solid var(--surface-2);
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+}
+.tabbar button {
+  background: none;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  padding: 4px 12px;
+}
+.tabbar button.on {
+  color: var(--accent);
+}
+.tabbar .ico {
+  font-size: 20px;
+}
+
+/* Graduation announcement */
+.graduation {
+  background: linear-gradient(135deg, #2a3a2e, #26262c);
+  border: 1px solid var(--accent-2);
+}
+
+/* Setup / token gate */
+.setup {
+  max-width: 420px;
+  margin: 60px auto;
+  text-align: center;
+}
+.setup input {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid #3a3a44;
+  color: var(--text);
+  font: inherit;
+  margin: 12px 0;
+}
+
+/* Kana drill */
+.drill-card {
+  text-align: center;
+}
+.drill-kana {
+  font-size: 96px;
+  line-height: 1.1;
+  margin: 20px 0;
+}
+.drill-answer {
+  font-size: 40px;
+  color: var(--accent);
+}
+.drill-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+.drill-choices button {
+  padding: 16px;
+  font-size: 20px;
+}
+.drill-choices button.correct {
+  background: var(--accent-2);
+  color: #10241a;
+}
+.drill-choices button.wrong {
+  background: var(--danger);
+  color: #2a120c;
+}
+
+/* FSRS rating buttons */
+.drill-choices button.rate-again {
+  background: #3a1f18;
+  color: #eaa189;
+}
+.drill-choices button.rate-hard {
+  background: #3a2f1a;
+  color: #e8c98a;
+}
+.drill-choices button.rate-good {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.drill-choices button.rate-easy {
+  background: var(--accent-2);
+  color: #10241a;
+}
+
+/* Voice recorder */
+.recorder {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+.recorder .rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--danger);
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.transcript {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  font-size: 15px;
+}
+label.field {
+  display: block;
+  margin: 14px 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+label.field input,
+label.field select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid #3a3a44;
+  color: var(--text);
+  font: inherit;
+}
+.row-inline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
