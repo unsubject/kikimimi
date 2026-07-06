@@ -5,10 +5,11 @@ import { Practice } from "./views/Practice.js";
 import { Review } from "./views/Review.js";
 import { Talk } from "./views/Talk.js";
 import { Library } from "./views/Library.js";
+import { Progress } from "./views/Progress.js";
 import { Settings } from "./views/Settings.js";
 import { registerServiceWorker } from "./push.js";
 
-type Tab = "today" | "review" | "talk" | "library" | "practice" | "settings";
+type Tab = "today" | "review" | "talk" | "library" | "practice" | "progress" | "settings";
 
 export function App() {
   const [ready, setReady] = useState(hasToken());
@@ -32,6 +33,7 @@ export function App() {
       {tab === "talk" && <Talk />}
       {tab === "library" && <Library />}
       {tab === "practice" && <Practice />}
+      {tab === "progress" && <Progress />}
       {tab === "settings" && <Settings />}
 
       <nav className="tabbar">
@@ -49,6 +51,9 @@ export function App() {
         </button>
         <button className={tab === "practice" ? "on" : ""} onClick={() => setTab("practice")}>
           <span className="ico">あ</span>練習
+        </button>
+        <button className={tab === "progress" ? "on" : ""} onClick={() => setTab("progress")}>
+          <span className="ico">📊</span>進捗
         </button>
         <button className={tab === "settings" ? "on" : ""} onClick={() => setTab("settings")}>
           <span className="ico">⚙</span>設定

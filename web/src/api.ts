@@ -12,6 +12,10 @@ import type {
   TalkTurn,
   Gloss,
   GlossResponse,
+  ProgressResponse,
+  Deliverable,
+  GauntletItem,
+  GauntletResult,
 } from "@kikimimi/shared";
 
 /**
@@ -145,6 +149,17 @@ export const api = {
   subscribePush: (sub: PushSubscriptionJSON) =>
     req<{ ok: boolean }>("/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
   testPush: () => req<{ sent: number }>("/push/test", { method: "POST" }),
+  progress: () => req<ProgressResponse>("/progress"),
+  deliverables: () => req<{ deliverables: Deliverable[] }>("/deliverables"),
+  updateDeliverable: (id: string, links: { artifact_url?: string | null; notion_url?: string | null }) =>
+    req<{ ok: boolean }>(`/deliverables/${id}`, { method: "PUT", body: JSON.stringify(links) }),
+  // GET returns the blind item (404 when nothing has audio yet).
+  gauntlet: () => req<GauntletItem>("/gauntlet"),
+  gradeGauntlet: (itemId: string, text: string) =>
+    req<GauntletResult>("/gauntlet/grade", {
+      method: "POST",
+      body: JSON.stringify({ item_id: itemId, text }),
+    }),
 };
 
 /** Build an audio URL that carries the token (audio elements can't set headers). */

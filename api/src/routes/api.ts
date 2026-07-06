@@ -21,6 +21,7 @@ import { ONYOMI_RULES } from "../content/onyomi.js";
 import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
 import { conversationOpener, conversationTurn } from "../converse.js";
 import { glossWord } from "../gloss.js";
+import { computeProgress } from "../progress.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -32,6 +33,18 @@ import type {
 import { TTS_VOICES } from "@kikimimi/shared";
 
 const isRating = (n: unknown): n is SrsRating => n === 1 || n === 2 || n === 3 || n === 4;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Accept only http(s) links for stored deliverable URLs (blocks javascript: etc.). */
+const isHttpUrl = (u: string): boolean => {
+  try {
+    const p = new URL(u);
+    return p.protocol === "http:" || p.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 type Vars = { sql: ReturnType<typeof openDb> };
 
@@ -444,6 +457,119 @@ api.post("/gloss/save", async (c) => {
     { word: b.word.trim(), reading: b.reading.trim(), meaning_zh: b.meaning_zh ?? "", jlpt },
   ]);
   return c.json({ added });
+});
+
+/** Progress dashboard: per-skill state, JLPT coverage, graduations (spec §7, v1.0). */
+api.get("/progress", async (c) => {
+  const sql = c.get("sql");
+  return c.json(await computeProgress(sql));
+});
+
+/** Work Gallery: the six sprint deliverables and their artifact links (spec §7). */
+api.get("/deliverables", async (c) => {
+  const sql = c.get("sql");
+  const rows = await sql`select * from deliverables order by sprint`;
+  return c.json({ deliverables: rows });
+});
+
+/** Attach an artifact / Notion link to a deliverable (mark it shipped). */
+api.put("/deliverables/:id", async (c) => {
+  const sql = c.get("sql");
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid id" }, 400);
+  const b = await c.req.json<{ artifact_url?: string | null; notion_url?: string | null }>();
+  for (const u of [b.artifact_url, b.notion_url]) {
+    if (typeof u === "string" && u.trim() && !isHttpUrl(u)) {
+      return c.json({ error: "links must be http(s) URLs" }, 400);
+    }
+  }
+  // PATCH semantics via coalesce: only a provided key overwrites its column, so
+  // attaching an artifact link can't silently wipe an existing notion_url (an
+  // absent key binds null → coalesce keeps the current value).
+  const [row] = await sql`
+    update deliverables set
+      artifact_url = coalesce(${b.artifact_url === undefined ? null : b.artifact_url}, artifact_url),
+      notion_url   = coalesce(${b.notion_url === undefined ? null : b.notion_url}, notion_url)
+    where id = ${id}
+    returning id`;
+  if (!row) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
+/**
+ * Listening gauntlet (spec §11 Sprint 6): a blind listening test. Serve an
+ * item's AUDIO ONLY (no text); the learner explains what it was about, graded
+ * ≥70% gist = pass. To keep it genuinely blind we exclude the single newest
+ * item — that is today's drop, just seen with full text on the Today view — and
+ * pick at random, so this tests retention of previously-heard audio rather than
+ * a re-listen of just-read material. Falls back to the newest only when it is
+ * the sole item with audio.
+ */
+api.get("/gauntlet", async (c) => {
+  const sql = c.get("sql");
+  let [row] = await sql`
+    select id, audio_r2_key from items
+    where audio_r2_key is not null
+      and id <> (select id from items where audio_r2_key is not null
+                 order by created_at desc limit 1)
+    order by random() limit 1`;
+  if (!row) {
+    [row] = await sql`
+      select id, audio_r2_key from items
+      where audio_r2_key is not null order by created_at desc limit 1`;
+  }
+  if (!row) return c.json({ error: "no items with audio yet" }, 404);
+  return c.json({
+    item_id: String(row.id),
+    audio_r2_key: row.audio_r2_key ? String(row.audio_r2_key) : null,
+    // Deliberately generic: the item's own explain_back_prompt can name the
+    // topic and would leak the gist before the audio plays, breaking blindness.
+    prompt: "聞こえた内容を、覚えている範囲で日本語で説明してください。",
+  });
+});
+
+/** Grade a gauntlet attempt: blind explain-back → pass at ≥70% gist. */
+api.post("/gauntlet/grade", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+  const body = await c.req.json<{ item_id: string; text: string }>();
+  if (!body.item_id || !body.text?.trim()) {
+    return c.json({ error: "item_id and text required" }, 400);
+  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
+
+  const [item] = await sql`select * from items where id = ${body.item_id}`;
+  if (!item) return c.json({ error: "not found" }, 404);
+
+  const [resp] = await sql`
+    insert into responses (item_id, mode, raw_text)
+    values (${body.item_id}, 'gauntlet', ${body.text}) returning id`;
+
+  const { grade, usd } = await gradeExplainBack(
+    c.env,
+    {
+      script_jp: String(item.script_jp),
+      gist_zh: String(item.gist_zh ?? ""),
+      explain_back_prompt: String(item.explain_back_prompt ?? ""),
+    },
+    body.text,
+  );
+  await logCost(sql, tz, "gauntlet_grade", usd);
+  await sql`
+    insert into evaluations (response_id, score, missed_points, feedback, model)
+    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
+            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
+
+  // The gauntlet is a listening assessment → feeds the listening skill.
+  await recordScore(sql, "listening", grade.score);
+
+  return c.json({
+    score: grade.score,
+    pass: grade.score >= 70,
+    feedback: grade.feedback,
+    missed_points: grade.missed_points,
+  });
 });
 
 /** Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). */
