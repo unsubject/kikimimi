@@ -127,6 +127,34 @@ export interface ShadowGrade {
   feedback: string;
 }
 
+// --- Conversation mode (Sprint 4) ---
+
+export interface KeigoNote {
+  form: string;
+  type: "尊敬" | "謙譲" | "丁寧";
+  plain: string;
+}
+
+/** A single conversation turn held in the client and posted back for context. */
+export interface TalkTurn {
+  role: "assistant" | "user";
+  text: string;
+}
+
+export interface OpenerResponse {
+  question_jp: string;
+  audio_key: string;
+}
+
+export interface TalkResponse {
+  transcript: string;
+  reply_jp: string;
+  reply_audio_key: string;
+  correction: string | null;
+  keigo_notes: KeigoNote[];
+  cost: CostSummary;
+}
+
 export interface ReviewCard {
   id: string;
   type: SrsCardType | string;

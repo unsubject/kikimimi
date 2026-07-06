@@ -3,10 +3,11 @@ import { hasToken, setToken } from "./api.js";
 import { Today } from "./views/Today.js";
 import { Practice } from "./views/Practice.js";
 import { Review } from "./views/Review.js";
+import { Talk } from "./views/Talk.js";
 import { Settings } from "./views/Settings.js";
 import { registerServiceWorker } from "./push.js";
 
-type Tab = "today" | "review" | "practice" | "settings";
+type Tab = "today" | "review" | "talk" | "practice" | "settings";
 
 export function App() {
   const [ready, setReady] = useState(hasToken());
@@ -27,6 +28,7 @@ export function App() {
 
       {tab === "today" && <Today />}
       {tab === "review" && <Review />}
+      {tab === "talk" && <Talk />}
       {tab === "practice" && <Practice />}
       {tab === "settings" && <Settings />}
 
@@ -36,6 +38,9 @@ export function App() {
         </button>
         <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>
           <span className="ico">🔁</span>復習
+        </button>
+        <button className={tab === "talk" ? "on" : ""} onClick={() => setTab("talk")}>
+          <span className="ico">💬</span>会話
         </button>
         <button className={tab === "practice" ? "on" : ""} onClick={() => setTab("practice")}>
           <span className="ico">あ</span>練習

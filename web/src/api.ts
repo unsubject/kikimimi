@@ -7,6 +7,9 @@ import type {
   SrsRating,
   OnyomiRule,
   ShadowGrade,
+  OpenerResponse,
+  TalkResponse,
+  TalkTurn,
 } from "@kikimimi/shared";
 
 /**
@@ -83,6 +86,24 @@ export const api = {
       throw new ApiError(body.error ?? "shadow failed", res.status);
     }
     return res.json() as Promise<{ grade: ShadowGrade; transcript: string }>;
+  },
+  talkOpener: (itemId: string) =>
+    req<OpenerResponse>(`/talk/opener?item_id=${encodeURIComponent(itemId)}`),
+  talk: async (itemId: string, audio: Blob, history: TalkTurn[]) => {
+    const form = new FormData();
+    form.append("item_id", itemId);
+    form.append("history", JSON.stringify(history));
+    form.append("audio", audio, "talk.webm");
+    const res = await fetch("/api/talk", {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(body.error ?? "talk failed", res.status);
+    }
+    return res.json() as Promise<TalkResponse>;
   },
   review: () => req<ReviewQueueResponse>("/review"),
   gradeCard: (id: string, rating: SrsRating) =>

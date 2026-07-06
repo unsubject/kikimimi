@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { closeDb, openDb } from "../db.js";
-import { readSpend, summarize, logCost, ttsCostUsd } from "../cost.js";
-import { synthesize } from "../tts.js";
+import { readSpend, summarize, logCost } from "../cost.js";
 import { runPipeline, rowToItem } from "../content/pipeline.js";
 import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
@@ -12,25 +11,18 @@ import { dueCards, dueCount, gradeCard, harvestError, harvestOnyomi } from "../c
 import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
 import { gradeShadowing } from "../shadow.js";
 import { ONYOMI_RULES } from "../content/onyomi.js";
+import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
+import { conversationOpener, conversationTurn, type ConversationTurn } from "../converse.js";
 import type {
   ScaffoldStage,
   TodayResponse,
   PushSubscriptionJSON,
   ReviewQueueResponse,
   SrsRating,
-  TtsVoice,
 } from "@kikimimi/shared";
 import { TTS_VOICES } from "@kikimimi/shared";
 
 const isRating = (n: unknown): n is SrsRating => n === 1 || n === 2 || n === 3 || n === 4;
-
-/** SHA-256 → lowercase hex, for content-addressing cached TTS in R2. */
-async function sha256hex(s: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 type Vars = { sql: ReturnType<typeof openDb> };
 
@@ -370,8 +362,8 @@ api.post("/tts", async (c) => {
   const tz = await TZ(sql);
   const { text } = await c.req.json<{ text: string }>();
   const trimmed = (text ?? "").trim();
-  if (!trimmed || trimmed.length > 200) {
-    return c.json({ error: "text must be 1–200 chars" }, 400);
+  if (!trimmed || trimmed.length > TTS_MAX_CHARS) {
+    return c.json({ error: `text must be 1–${TTS_MAX_CHARS} chars` }, 400);
   }
 
   // Governor: TTS is a paid action, so gate it like /explain-back (spec §10).
@@ -380,18 +372,7 @@ api.post("/tts", async (c) => {
     return c.json({ error: "cost_limited", cost: summary }, 402);
   }
 
-  const [s] = await sql`select tts_voice from user_settings where id = 1`;
-  const voice = String(s?.tts_voice ?? "nova");
-
-  // Content-address by voice+text so the same line is synthesized at most once.
-  const key = `tts/${await sha256hex(`${voice}:${trimmed}`)}.mp3`;
-  if (await c.env.AUDIO.head(key)) {
-    return c.json({ key }); // cache hit — no synthesis, no cost
-  }
-
-  const audio = await synthesize(c.env, trimmed, voice as TtsVoice);
-  await c.env.AUDIO.put(key, audio, { httpMetadata: { contentType: "audio/mpeg" } });
-  await logCost(sql, tz, "tts", ttsCostUsd(trimmed.length));
+  const key = await synthCached(c.env, sql, tz, trimmed, await currentVoice(sql));
   return c.json({ key });
 });
 
@@ -439,4 +420,108 @@ api.post("/shadow", async (c) => {
   const transition = await recordScore(sql, "speaking", grade.score);
 
   return c.json({ grade, transcript, transition, cost: summarize(await readSpend(sql, tz)) });
+});
+
+/**
+ * Conversation opener (spec §4 Talk): the bot asks a question about today's
+ * item, returned as text + synthesized audio (listening-first).
+ */
+api.get("/talk/opener", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+  const itemId = c.req.query("item_id");
+  if (!itemId) return c.json({ error: "item_id required" }, 400);
+
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+
+  const [item] = await sql`select title_jp, script_jp from items where id = ${itemId}`;
+  if (!item) return c.json({ error: "not found" }, 404);
+
+  const { question_jp, usd } = await conversationOpener(c.env, {
+    title_jp: String(item.title_jp),
+    script_jp: String(item.script_jp),
+  });
+  await logCost(sql, tz, "conversation", usd);
+  const audio_key = await synthCached(c.env, sql, tz, question_jp, await currentVoice(sql));
+  return c.json({ question_jp, audio_key });
+});
+
+/**
+ * One conversation turn (spec §4): the learner's voice answer → Whisper →
+ * graded Japanese reply + one correction + keigo tags → reply audio. History
+ * is held client-side and posted back, keeping the server stateless per turn.
+ */
+api.post("/talk", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+
+  const form = await c.req.formData();
+  const itemId = String(form.get("item_id") ?? "");
+  const entry = form.get("audio");
+  if (!itemId || !entry || typeof entry === "string") {
+    return c.json({ error: "item_id and audio required" }, 400);
+  }
+  const blob = entry as unknown as Blob;
+  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
+  if (blob.type && !blob.type.startsWith("audio/")) {
+    return c.json({ error: "unsupported_media_type" }, 415);
+  }
+
+  let history: ConversationTurn[] = [];
+  try {
+    const raw = form.get("history");
+    if (typeof raw === "string" && raw) history = JSON.parse(raw) as ConversationTurn[];
+  } catch {
+    history = [];
+  }
+
+  const [item] = await sql`select title_jp, script_jp from items where id = ${itemId}`;
+  if (!item) return c.json({ error: "not found" }, 404);
+
+  const audio = await blob.arrayBuffer();
+  const mime = blob.type || "audio/webm";
+  const voiceKey = `voice/${crypto.randomUUID()}.${mime.includes("webm") ? "webm" : "ogg"}`;
+  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
+
+  const { text: transcript } = await transcribe(c.env, audio, mime);
+  await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
+  if (!transcript.trim()) return c.json({ error: "empty_transcript" }, 422);
+
+  await sql`
+    insert into responses (item_id, mode, voice_r2_key, transcript)
+    values (${itemId}, 'conversation', ${voiceKey}, ${transcript})`;
+
+  const { reply, usd } = await conversationTurn(
+    c.env,
+    { title_jp: String(item.title_jp), script_jp: String(item.script_jp) },
+    history,
+    transcript,
+  );
+  await logCost(sql, tz, "conversation", usd);
+
+  if (reply.error_category && reply.error_detail) {
+    await sql`
+      insert into error_log (category, detail, item_id)
+      values (${reply.error_category}, ${reply.error_detail}, ${itemId})`;
+    await harvestError(sql, itemId, reply.error_category, reply.error_detail);
+  }
+
+  const audio_key = await synthCached(c.env, sql, tz, reply.reply_jp, await currentVoice(sql));
+
+  return c.json({
+    transcript,
+    reply_jp: reply.reply_jp,
+    reply_audio_key: audio_key,
+    correction: reply.correction,
+    keigo_notes: reply.keigo_notes,
+    cost: summarize(await readSpend(sql, tz)),
+  });
 });
