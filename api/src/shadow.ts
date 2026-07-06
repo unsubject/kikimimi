@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import type { ShadowGrade } from "@kikimimi/shared";
 import { generateStructured, type JsonSchema } from "./anthropic.js";
 
 /**
@@ -10,15 +11,9 @@ import { generateStructured, type JsonSchema } from "./anthropic.js";
  *
  * Text-only signal has limits (Whisper normalises some detail), so the grader
  * is told to judge conservatively and only flag clear discrepancies.
+ *
+ * ShadowGrade is defined in @kikimimi/shared so the client renders the same shape.
  */
-export interface ShadowGrade {
-  score: number; // 0-100 imitation accuracy
-  mora_ok: boolean;
-  long_vowel_ok: boolean;
-  gemination_ok: boolean;
-  feedback: string; // one concrete correction, no filler
-}
-
 const SHADOW_SCHEMA: JsonSchema = {
   type: "object",
   additionalProperties: false,

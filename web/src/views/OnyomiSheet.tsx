@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { OnyomiRule } from "@kikimimi/shared";
 import { api, ApiError } from "../api.js";
+import { useTts } from "../useTts.js";
 
 /**
  * The Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). Also seeds the
@@ -11,6 +12,8 @@ export function OnyomiSheet() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [seedMsg, setSeedMsg] = useState<string>("");
+  // Listening-first: each example must be *heard*, not just read (spec anti-bypass).
+  const { play, loading: ttsLoading, error: ttsError } = useTts();
 
   useEffect(() => {
     api
@@ -45,6 +48,7 @@ export function OnyomiSheet() {
           このパックを復習デッキに追加
         </button>
         {seedMsg && <p className="muted">{seedMsg}</p>}
+        {ttsError && <p className="muted">{ttsError}</p>}
       </div>
 
       {rules.map((rule) => (
@@ -63,9 +67,19 @@ export function OnyomiSheet() {
                   {ex.hanzi}
                   <span className="r"> {ex.cantonese}</span>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 18 }}>{ex.kana}</div>
-                  <div className="r">{ex.romaji}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    onClick={() => play(ex.kana)}
+                    disabled={ttsLoading === ex.kana}
+                    aria-label={`${ex.kana} を再生`}
+                    style={{ padding: "4px 10px" }}
+                  >
+                    {ttsLoading === ex.kana ? "…" : "▶"}
+                  </button>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 18 }}>{ex.kana}</div>
+                    <div className="r">{ex.romaji}</div>
+                  </div>
                 </div>
               </div>
             ))}

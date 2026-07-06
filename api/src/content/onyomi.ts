@@ -11,20 +11,9 @@
  * `note` flags the common irregularities.
  */
 
-export interface OnyomiExample {
-  hanzi: string;
-  cantonese: string; // jyutping with tone, e.g. "luk6"
-  kana: string; // on'yomi in kana, e.g. "ろく"
-  romaji: string; // e.g. "roku"
-}
-
-export interface OnyomiRule {
-  id: string;
-  cantoneseFinal: string; // the Cantonese/Middle-Chinese final
-  japanesePattern: string; // the on'yomi reflex
-  note: string;
-  examples: OnyomiExample[];
-}
+// OnyomiRule/OnyomiExample live in @kikimimi/shared so the web cheat sheet and
+// this seed source share one definition (no drift between client and server).
+import type { OnyomiRule } from "@kikimimi/shared";
 
 export const ONYOMI_RULES: OnyomiRule[] = [
   {
@@ -43,7 +32,7 @@ export const ONYOMI_RULES: OnyomiRule[] = [
     id: "final-t",
     cantoneseFinal: "-t (入声 entering tone)",
     japanesePattern: "つ / ち",
-    note: "MC -t stops surface as -tsu (older) or -chi. -chi is the go-on layer, -tsu the kan-on.",
+    note: "MC -t stops surface as -chi (older 呉音 go-on layer) or -tsu (later 漢音 kan-on).",
     examples: [
       { hanzi: "一", cantonese: "jat1", kana: "いち", romaji: "ichi" },
       { hanzi: "日", cantonese: "jat6", kana: "にち", romaji: "nichi" },

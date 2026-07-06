@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReviewCard, SrsRating } from "@kikimimi/shared";
 import { api, ApiError } from "../api.js";
+import { useTts } from "../useTts.js";
 
 /**
  * FSRS review surface (spec §5). Listening-first intent: the front shows the
@@ -22,6 +23,8 @@ export function Review() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(0);
+  // On'yomi cards are about the *reading* — let the learner hear it (listening-first).
+  const { play, loading: ttsLoading } = useTts();
 
   const load = async () => {
     setLoading(true);
@@ -112,6 +115,16 @@ export function Review() {
           <>
             <div className="zh" style={{ fontSize: 18, margin: "10px 0" }}>
               {back}
+              {current!.type === "onyomi" && current!.back.kana != null && (
+                <button
+                  onClick={() => play(String(current!.back.kana))}
+                  disabled={ttsLoading === String(current!.back.kana)}
+                  aria-label="音読みを再生"
+                  style={{ marginLeft: 10, padding: "4px 10px" }}
+                >
+                  {ttsLoading === String(current!.back.kana) ? "…" : "▶"}
+                </button>
+              )}
             </div>
             <div className="drill-choices">
               {RATINGS.map((r) => (

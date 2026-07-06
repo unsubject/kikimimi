@@ -5,10 +5,16 @@ import { useRecorder } from "../useRecorder.js";
 import { Player } from "../components/Player.js";
 
 /**
- * Shadowing drill (spec §4; learning plan Sprint 3). Play a sentence from
- * today's item, repeat it, and get feedback on the three contrasts Chinese
+ * Shadowing drill (spec §4; learning plan Sprint 3). Play a single sentence
+ * from today's item, repeat it, and get feedback on the three contrasts Chinese
  * speakers miss: morae, long vowels, gemination. Falls back to a built-in set
  * when there's no item yet.
+ *
+ * Listening-first: we synthesize audio for THE ONE sentence being graded (via
+ * /tts, cached in R2) rather than replaying the whole multi-sentence podcast —
+ * grading a split sentence against the full-item audio was the old bug. The
+ * sentence TEXT stays hidden behind a reveal so the learner shadows BY EAR
+ * first (kanji otherwise lets you fake-read while phonology stays at zero).
  */
 const FALLBACK_SENTENCES = [
   "きょうは いい てんきです。",
@@ -19,8 +25,11 @@ const FALLBACK_SENTENCES = [
 
 export function Shadow() {
   const [sentences, setSentences] = useState<string[]>(FALLBACK_SENTENCES);
-  const [audioKey, setAudioKey] = useState<string | null>(null);
   const [idx, setIdx] = useState(0);
+  const [sentenceKey, setSentenceKey] = useState<string | null>(null);
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const [grade, setGrade] = useState<ShadowGrade | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,7 +46,6 @@ export function Shadow() {
             .map((s) => s.trim())
             .filter((s) => s.length > 1);
           if (parts.length) setSentences(parts);
-          setAudioKey(t.item.audio_r2_key);
         }
       })
       .catch(() => {
@@ -46,6 +54,37 @@ export function Shadow() {
   }, []);
 
   const target = sentences[idx] ?? "";
+
+  // Fetch per-sentence audio whenever the target changes. Hide the text until
+  // the learner opts in, so the first pass is ear-only.
+  useEffect(() => {
+    let cancelled = false;
+    setSentenceKey(null);
+    setTtsError(null);
+    setRevealed(false);
+    if (!target) return;
+    setTtsLoading(true);
+    api
+      .tts(target)
+      .then((r) => {
+        if (!cancelled) setSentenceKey(r.key);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setTtsError(
+            e instanceof ApiError && e.message === "cost_limited"
+              ? "本日は音声生成の上限に達しました。文を見て練習できます。"
+              : "音声を生成できませんでした。文を見て練習できます。",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTtsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
 
   const toggle = async () => {
     if (recorder.recording) {
@@ -81,12 +120,23 @@ export function Shadow() {
       <div className="card">
         <strong>シャドーイング</strong>
         <p className="muted" style={{ fontSize: 13 }}>
-          お手本を聞いて、そのまま真似して話します。モーラ・長音・促音に注目。
+          まず耳だけで真似しましょう。モーラ・長音・促音に注目。文はあとで確認できます。
         </p>
-        {audioKey && <Player src={audioUrl(audioKey)} />}
-        <p className="jp-body" style={{ fontSize: 22 }}>
-          {target}
-        </p>
+        {ttsLoading && <p className="muted">音声を準備中…</p>}
+        {!ttsLoading && sentenceKey && <Player src={audioUrl(sentenceKey)} />}
+        {!ttsLoading && !sentenceKey && ttsError && (
+          <p className="muted">{ttsError}</p>
+        )}
+
+        {revealed ? (
+          <p className="jp-body" style={{ fontSize: 22 }}>
+            {target}
+          </p>
+        ) : (
+          <button onClick={() => setRevealed(true)} style={{ marginTop: 8 }}>
+            文を見る
+          </button>
+        )}
 
         <div className="row-inline">
           {recorder.supported ? (

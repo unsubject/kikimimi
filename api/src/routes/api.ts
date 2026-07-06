@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { closeDb, openDb } from "../db.js";
-import { readSpend, summarize, logCost } from "../cost.js";
+import { readSpend, summarize, logCost, ttsCostUsd } from "../cost.js";
+import { synthesize } from "../tts.js";
 import { runPipeline, rowToItem } from "../content/pipeline.js";
 import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
@@ -17,10 +18,19 @@ import type {
   PushSubscriptionJSON,
   ReviewQueueResponse,
   SrsRating,
+  TtsVoice,
 } from "@kikimimi/shared";
 import { TTS_VOICES } from "@kikimimi/shared";
 
 const isRating = (n: unknown): n is SrsRating => n === 1 || n === 2 || n === 3 || n === 4;
+
+/** SHA-256 → lowercase hex, for content-addressing cached TTS in R2. */
+async function sha256hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 type Vars = { sql: ReturnType<typeof openDb> };
 
@@ -174,6 +184,12 @@ api.post("/explain-back/voice", async (c) => {
   }
   // workers-types under-types FormData file entries; it is a Blob at runtime.
   const blob = entry as unknown as Blob;
+  // Bound the upload before we buffer/transcribe it (some MediaRecorder outputs
+  // omit a type, so only reject a type that is set and clearly non-audio).
+  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
+  if (blob.type && !blob.type.startsWith("audio/")) {
+    return c.json({ error: "unsupported_media_type" }, 415);
+  }
 
   const [item] = await sql`select * from items where id = ${itemId}`;
   if (!item) return c.json({ error: "not found" }, 404);
@@ -185,6 +201,11 @@ api.post("/explain-back/voice", async (c) => {
 
   const { text: transcript } = await transcribe(c.env, audio, mime);
   await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
+
+  // No speech detected → don't spend on grading or pollute the learner model.
+  if (!transcript.trim()) {
+    return c.json({ error: "empty_transcript" }, 422);
+  }
 
   const [resp] = await sql`
     insert into responses (item_id, mode, voice_r2_key, transcript)
@@ -340,6 +361,41 @@ api.post("/onyomi/seed", async (c) => {
 });
 
 /**
+ * On-demand TTS (listening-first): synthesize a short line and cache it in R2 by
+ * content hash. Powers per-sentence shadowing and on'yomi playback. Cache hits
+ * cost nothing; only a miss calls OpenAI + logs cost, so replays are free.
+ */
+api.post("/tts", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+  const { text } = await c.req.json<{ text: string }>();
+  const trimmed = (text ?? "").trim();
+  if (!trimmed || trimmed.length > 200) {
+    return c.json({ error: "text must be 1–200 chars" }, 400);
+  }
+
+  // Governor: TTS is a paid action, so gate it like /explain-back (spec §10).
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+
+  const [s] = await sql`select tts_voice from user_settings where id = 1`;
+  const voice = String(s?.tts_voice ?? "nova");
+
+  // Content-address by voice+text so the same line is synthesized at most once.
+  const key = `tts/${await sha256hex(`${voice}:${trimmed}`)}.mp3`;
+  if (await c.env.AUDIO.head(key)) {
+    return c.json({ key }); // cache hit — no synthesis, no cost
+  }
+
+  const audio = await synthesize(c.env, trimmed, voice as TtsVoice);
+  await c.env.AUDIO.put(key, audio, { httpMetadata: { contentType: "audio/mpeg" } });
+  await logCost(sql, tz, "tts", ttsCostUsd(trimmed.length));
+  return c.json({ key });
+});
+
+/**
  * Shadowing attempt (spec §4): multipart target_text + audio → Whisper → grade
  * on morae/long-vowel/gemination. Feeds the speaking skill's trailing scores.
  */
@@ -359,11 +415,22 @@ api.post("/shadow", async (c) => {
     return c.json({ error: "target_text and audio required" }, 400);
   }
   const blob = entry as unknown as Blob;
+  // Bound the upload before we buffer/transcribe it (some MediaRecorder outputs
+  // omit a type, so only reject a type that is set and clearly non-audio).
+  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
+  if (blob.type && !blob.type.startsWith("audio/")) {
+    return c.json({ error: "unsupported_media_type" }, 415);
+  }
   const audio = await blob.arrayBuffer();
   const mime = blob.type || "audio/webm";
 
   const { text: transcript } = await transcribe(c.env, audio, mime);
   await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
+
+  // No speech detected → don't spend on grading or pollute the learner model.
+  if (!transcript.trim()) {
+    return c.json({ error: "empty_transcript" }, 422);
+  }
 
   const { grade, usd } = await gradeShadowing(c.env, targetText, transcript);
   await logCost(sql, tz, "shadow_grade", usd);

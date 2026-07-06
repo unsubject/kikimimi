@@ -65,6 +65,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ item_id: itemId, text }),
     }),
+  tts: (text: string) =>
+    req<{ key: string }>("/tts", { method: "POST", body: JSON.stringify({ text }) }),
   onyomi: () => req<{ rules: OnyomiRule[] }>("/onyomi"),
   seedOnyomi: () => req<{ added: number }>("/onyomi/seed", { method: "POST" }),
   shadow: async (targetText: string, audio: Blob) => {
