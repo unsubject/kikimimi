@@ -222,8 +222,8 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  font-size: 11px;
-  padding: 4px 12px;
+  font-size: 10px;
+  padding: 4px 6px;
 }
 .tabbar button.on {
   color: var(--accent);
@@ -373,4 +373,135 @@ label.field select {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+/* Progress dashboard (進捗) */
+.score {
+  font-size: 28px;
+  font-weight: 700;
+}
+.totals-row {
+  display: flex;
+  gap: 20px;
+  margin-top: 12px;
+}
+.total-n {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.total-l {
+  font-size: 12px;
+}
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.skill-cell {
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.skill-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.skill-lv {
+  font-size: 20px;
+  color: var(--accent);
+}
+.skill-stage {
+  font-size: 11px;
+}
+.skill-meta {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.jlpt-bars {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.jlpt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.jlpt-lv {
+  width: 26px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.jlpt-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.jlpt-enc,
+.jlpt-mat {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+}
+.jlpt-enc {
+  background: rgba(232, 163, 61, 0.28);
+}
+.jlpt-mat {
+  background: var(--accent);
+}
+.jlpt-num {
+  width: 66px;
+  text-align: right;
+  font-size: 11px;
+}
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 48px;
+  margin-top: 12px;
+}
+.spark-bar {
+  flex: 1;
+  min-width: 3px;
+  background: var(--danger);
+  border-radius: 2px 2px 0 0;
+}
+.spark-bar.ok {
+  background: var(--accent-2);
+}
+.grad-list,
+.gallery {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.grad-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 14px;
+}
+.gallery li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 14px;
+}
+.gallery li.shipped {
+  color: var(--accent-2);
+}
+.gallery input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid #3a3a44;
+  color: var(--text);
+  font: inherit;
 }

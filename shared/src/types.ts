@@ -188,6 +188,64 @@ export interface ReviewQueueResponse {
   cap: number;
 }
 
+// --- Progress dashboard / Work Gallery / gauntlet (Sprint 6, v1.0) ---
+
+export interface SkillProgress {
+  skill: string;
+  level: number;
+  scaffold_stage: number;
+  trailing_mean: number | null;
+  items_at_stage_days: number;
+}
+
+export interface JlptCoverage {
+  level: string;
+  encountered: number;
+  matured: number;
+  total: number;
+  encountered_pct: number;
+  matured_pct: number;
+}
+
+export interface GraduationEntry {
+  skill: string;
+  from_stage: number;
+  to_stage: number;
+  direction: string;
+  created_at: string;
+}
+
+export interface ProgressResponse {
+  skills: SkillProgress[];
+  jlpt: JlptCoverage[];
+  graduations: GraduationEntry[];
+  recent_accuracy: number[];
+  totals: { items: number; cards: number; deliverables_done: number };
+}
+
+export interface Deliverable {
+  id: string;
+  sprint: number;
+  name: string;
+  artifact_url: string | null;
+  notion_url: string | null;
+  created_at: string;
+}
+
+/** A blind listening-gauntlet item — audio only, no text (spec §11). */
+export interface GauntletItem {
+  item_id: string;
+  audio_r2_key: string | null;
+  prompt: string;
+}
+
+export interface GauntletResult {
+  score: number;
+  pass: boolean; // ≥70% gist comprehension (spec §11 Sprint 6 target)
+  feedback: string;
+  missed_points: string[];
+}
+
 // Cost governor constants (spec §10 — CONFIRMED)
 export const COST_SOFT_WARN_USD = 1.5;
 export const COST_HARD_CEILING_USD = 2.0;

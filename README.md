@@ -58,9 +58,18 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Word-tap gloss | Tap any word → Yomitan-style pop-up (reading + Chinese meaning behind tap-reveal + JLPT). Cache-checked in a `glosses` table (`0002_glosses.sql`) so repeat taps are free; a miss calls the grading model once (governor-gated) |
 | Add-to-SRS | From a gloss, one tap adds the word to the FSRS deck as a vocab card (deduped) |
 
-Deferred per spec §6/§11: gamification (XP/levels), Progress dashboard,
-Work Gallery, listening-gauntlet — schema exists in
-`api/migrations/0001_init.sql`, shipping in v1.0.
+## What ships in v1.0 (Sprint 6)
+
+| Area | Delivered |
+|------|-----------|
+| Progress dashboard | `進捗` tab: per-skill level + scaffold stage + trailing accuracy, item/card totals, a recent-scores sparkline, and the graduation log |
+| JLPT coverage | Bars translating organic SRS progress onto the JLPT scale — *encountered* (a card of that level exists) vs *matured* (FSRS stability ≥ 1 week). A ruler, not a syllabus (spec §7) |
+| Work Gallery | The six sprint deliverables (`0003_deliverables_seed.sql`), each shippable by attaching an artifact/Notion link |
+| Listening gauntlet | Blind audio-only comprehension test (spec §11): listen with no text, explain the gist, graded ≥70% = pass; feeds the listening skill |
+
+Phase-2 hooks (cross-source summaries, longer conversation, production-weighted
+practice, published bridge pieces) are surfaced as a forward note in the
+dashboard.
 
 ## Architecture
 

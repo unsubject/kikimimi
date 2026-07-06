@@ -21,6 +21,7 @@ import { ONYOMI_RULES } from "../content/onyomi.js";
 import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
 import { conversationOpener, conversationTurn } from "../converse.js";
 import { glossWord } from "../gloss.js";
+import { computeProgress } from "../progress.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -444,6 +445,92 @@ api.post("/gloss/save", async (c) => {
     { word: b.word.trim(), reading: b.reading.trim(), meaning_zh: b.meaning_zh ?? "", jlpt },
   ]);
   return c.json({ added });
+});
+
+/** Progress dashboard: per-skill state, JLPT coverage, graduations (spec §7, v1.0). */
+api.get("/progress", async (c) => {
+  const sql = c.get("sql");
+  return c.json(await computeProgress(sql));
+});
+
+/** Work Gallery: the six sprint deliverables and their artifact links (spec §7). */
+api.get("/deliverables", async (c) => {
+  const sql = c.get("sql");
+  const rows = await sql`select * from deliverables order by sprint`;
+  return c.json({ deliverables: rows });
+});
+
+/** Attach an artifact / Notion link to a deliverable (mark it shipped). */
+api.put("/deliverables/:id", async (c) => {
+  const sql = c.get("sql");
+  const b = await c.req.json<{ artifact_url?: string | null; notion_url?: string | null }>();
+  await sql`
+    update deliverables
+    set artifact_url = ${b.artifact_url ?? null}, notion_url = ${b.notion_url ?? null}
+    where id = ${c.req.param("id")}`;
+  return c.json({ ok: true });
+});
+
+/**
+ * Listening gauntlet (spec §11 Sprint 6): a blind listening test. Serve a
+ * recent item's AUDIO ONLY (no text); the learner explains what it was about,
+ * graded ≥70% gist = pass. Picks the most recent item with audio.
+ */
+api.get("/gauntlet", async (c) => {
+  const sql = c.get("sql");
+  const [row] = await sql`
+    select id, audio_r2_key, explain_back_prompt from items
+    where audio_r2_key is not null order by created_at desc limit 1`;
+  if (!row) return c.json({ error: "no items with audio yet" }, 404);
+  return c.json({
+    item_id: String(row.id),
+    audio_r2_key: row.audio_r2_key ? String(row.audio_r2_key) : null,
+    prompt: String(row.explain_back_prompt ?? "聞こえた内容を説明してください。"),
+  });
+});
+
+/** Grade a gauntlet attempt: blind explain-back → pass at ≥70% gist. */
+api.post("/gauntlet/grade", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+  const body = await c.req.json<{ item_id: string; text: string }>();
+  if (!body.item_id || !body.text?.trim()) {
+    return c.json({ error: "item_id and text required" }, 400);
+  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
+
+  const [item] = await sql`select * from items where id = ${body.item_id}`;
+  if (!item) return c.json({ error: "not found" }, 404);
+
+  const [resp] = await sql`
+    insert into responses (item_id, mode, raw_text)
+    values (${body.item_id}, 'gauntlet', ${body.text}) returning id`;
+
+  const { grade, usd } = await gradeExplainBack(
+    c.env,
+    {
+      script_jp: String(item.script_jp),
+      gist_zh: String(item.gist_zh ?? ""),
+      explain_back_prompt: String(item.explain_back_prompt ?? ""),
+    },
+    body.text,
+  );
+  await logCost(sql, tz, "gauntlet_grade", usd);
+  await sql`
+    insert into evaluations (response_id, score, missed_points, feedback, model)
+    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
+            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
+
+  // The gauntlet is a listening assessment → feeds the listening skill.
+  await recordScore(sql, "listening", grade.score);
+
+  return c.json({
+    score: grade.score,
+    pass: grade.score >= 70,
+    feedback: grade.feedback,
+    missed_points: grade.missed_points,
+  });
 });
 
 /** Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). */
