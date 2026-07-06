@@ -33,9 +33,43 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Review surface | `復習` tab: due queue capped by the daily setting, recall-then-reveal, four FSRS ratings (もう一度/むずかしい/できた/かんたん) |
 | Voice explain-back | `🎤 声で説明` — MediaRecorder → Whisper (`whisper-1`, ja) → same grader; audio stored in R2, transcript shown |
 
-Deferred per spec §6/§11: gamification (XP/levels), conversation mode,
-long-read Library, Progress dashboard — the schema for them exists in
-`api/migrations/0001_init.sql` but is not yet written.
+## What ships in v0.3 (Sprint 3)
+
+| Area | Delivered |
+|------|-----------|
+| Cantonese→on'yomi pack | Correspondence table (`api/src/content/onyomi.ts`) for the entering-tone (-p/-t/-k) and nasal (-m/-n/-ng) finals with worked examples; published as an in-app cheat sheet and seeded into the SRS deck as an `onyomi` card pack |
+| Shadowing mode | Play a sentence from today's item → record imitation → Whisper → feedback on the three contrasts Chinese speakers miss (morae / long vowels / gemination); feeds the speaking skill's trailing scores |
+| Practice hub | `練習` tab unifies kana automaticity, shadowing, and the on'yomi sheet |
+
+## What ships in v0.4 (Sprint 4)
+
+| Area | Delivered |
+|------|-----------|
+| Conversation mode | `会話` tab: the bot asks a question about today's item (JP audio), the learner answers by voice → Whisper → the bot replies in graded plain Japanese with one correction; listening-first (bot turns auto-play). `GET /api/talk/opener`, `POST /api/talk` |
+| Keigo awareness | The conversation grader tags any 敬語 (尊敬/謙譲/丁寧) with its plain-form equivalent, for recognition — the bot keeps its own speech plain (the learner isn't producing keigo yet) |
+| Error recycling | Conversation mistakes feed the error log + spawn SRS cloze cards, same as explain-back |
+| TTS reuse | The v0.3 TTS cache is factored into `api/src/ttscache.ts` and reused for opener/reply audio (content-addressed in R2, synthesized at most once) |
+
+## What ships in v0.5 (Sprint 5)
+
+| Area | Delivered |
+|------|-----------|
+| Library | `文庫` tab: every past item as a long read — full text, furigana toggle, source link, re-listen player |
+| Word-tap gloss | Tap any word → Yomitan-style pop-up (reading + Chinese meaning behind tap-reveal + JLPT). Cache-checked in a `glosses` table (`0002_glosses.sql`) so repeat taps are free; a miss calls the grading model once (governor-gated) |
+| Add-to-SRS | From a gloss, one tap adds the word to the FSRS deck as a vocab card (deduped) |
+
+## What ships in v1.0 (Sprint 6)
+
+| Area | Delivered |
+|------|-----------|
+| Progress dashboard | `進捗` tab: per-skill level + scaffold stage + trailing accuracy, item/card totals, a recent-scores sparkline, and the graduation log |
+| JLPT coverage | Bars translating organic SRS progress onto the JLPT scale — *encountered* (a card of that level exists) vs *matured* (FSRS stability ≥ 1 week). A ruler, not a syllabus (spec §7) |
+| Work Gallery | The six sprint deliverables (`0003_deliverables_seed.sql`), each shippable by attaching an artifact/Notion link |
+| Listening gauntlet | Blind audio-only comprehension test (spec §11): listen with no text, explain the gist, graded ≥70% = pass; feeds the listening skill |
+
+Phase-2 hooks (cross-source summaries, longer conversation, production-weighted
+practice, published bridge pieces) are surfaced as a forward note in the
+dashboard.
 
 ## Architecture
 

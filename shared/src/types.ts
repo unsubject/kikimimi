@@ -100,7 +100,78 @@ export interface PushSubscriptionJSON {
 /** 1 = Again, 2 = Hard, 3 = Good, 4 = Easy. */
 export type SrsRating = 1 | 2 | 3 | 4;
 
-export type SrsCardType = "vocab" | "error_cloze";
+export type SrsCardType = "vocab" | "error_cloze" | "onyomi";
+
+// --- Cantonese → on'yomi (Sprint 3) ---
+
+export interface OnyomiExample {
+  hanzi: string;
+  cantonese: string;
+  kana: string;
+  romaji: string;
+}
+
+export interface OnyomiRule {
+  id: string;
+  cantoneseFinal: string;
+  japanesePattern: string;
+  note: string;
+  examples: OnyomiExample[];
+}
+
+export interface ShadowGrade {
+  score: number;
+  mora_ok: boolean;
+  long_vowel_ok: boolean;
+  gemination_ok: boolean;
+  feedback: string;
+}
+
+// --- Conversation mode (Sprint 4) ---
+
+export interface KeigoNote {
+  form: string;
+  // Recognize-only forms (learnplan §5): 尊敬語/謙譲語. です/ます (丁寧語) is
+  // actively produced by the learner (Sprint 2/4), so it is NOT tagged here.
+  type: "尊敬" | "謙譲";
+  plain: string;
+}
+
+/** A single conversation turn held in the client and posted back for context. */
+export interface TalkTurn {
+  role: "assistant" | "user";
+  text: string;
+}
+
+export interface OpenerResponse {
+  question_jp: string;
+  // null when TTS failed transiently — the client shows text without audio (P1/§4).
+  audio_key: string | null;
+}
+
+export interface TalkResponse {
+  transcript: string;
+  reply_jp: string;
+  // null when TTS failed transiently — the paid reply is still returned (P1/§4).
+  reply_audio_key: string | null;
+  correction: string | null;
+  keigo_notes: KeigoNote[];
+  cost: CostSummary;
+}
+
+// --- Library word-tap gloss (Sprint 5) ---
+
+export interface Gloss {
+  word: string;
+  reading: string;
+  meaning_zh: string;
+  jlpt: "N5" | "N4" | "N3" | "N2" | "N1" | string;
+}
+
+export interface GlossResponse {
+  gloss: Gloss;
+  cached: boolean;
+}
 
 export interface ReviewCard {
   id: string;
@@ -115,6 +186,64 @@ export interface ReviewQueueResponse {
   cards: ReviewCard[];
   due_count: number;
   cap: number;
+}
+
+// --- Progress dashboard / Work Gallery / gauntlet (Sprint 6, v1.0) ---
+
+export interface SkillProgress {
+  skill: string;
+  level: number;
+  scaffold_stage: number;
+  trailing_mean: number | null;
+  days_at_stage: number;
+}
+
+export interface JlptCoverage {
+  level: string;
+  encountered: number;
+  matured: number;
+  total: number;
+  encountered_pct: number;
+  matured_pct: number;
+}
+
+export interface GraduationEntry {
+  skill: string;
+  from_stage: number;
+  to_stage: number;
+  direction: string;
+  created_at: string;
+}
+
+export interface ProgressResponse {
+  skills: SkillProgress[];
+  jlpt: JlptCoverage[];
+  graduations: GraduationEntry[];
+  recent_accuracy: number[];
+  totals: { items: number; cards: number; deliverables_done: number };
+}
+
+export interface Deliverable {
+  id: string;
+  sprint: number;
+  name: string;
+  artifact_url: string | null;
+  notion_url: string | null;
+  created_at: string;
+}
+
+/** A blind listening-gauntlet item — audio only, no text (spec §11). */
+export interface GauntletItem {
+  item_id: string;
+  audio_r2_key: string | null;
+  prompt: string;
+}
+
+export interface GauntletResult {
+  score: number;
+  pass: boolean; // ≥70% gist comprehension (spec §11 Sprint 6 target)
+  feedback: string;
+  missed_points: string[];
 }
 
 // Cost governor constants (spec §10 — CONFIRMED)

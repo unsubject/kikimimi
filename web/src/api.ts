@@ -5,6 +5,17 @@ import type {
   TtsVoice,
   ReviewQueueResponse,
   SrsRating,
+  OnyomiRule,
+  ShadowGrade,
+  OpenerResponse,
+  TalkResponse,
+  TalkTurn,
+  Gloss,
+  GlossResponse,
+  ProgressResponse,
+  Deliverable,
+  GauntletItem,
+  GauntletResult,
 } from "@kikimimi/shared";
 
 /**
@@ -52,7 +63,7 @@ export class ApiError extends Error {
 export const api = {
   config: () => req<{ vapidPublicKey: string; voices: TtsVoice[] }>("/config"),
   today: () => req<TodayResponse>("/today"),
-  items: () => req<{ items: Item[] }>("/items"),
+  items: (offset = 0) => req<{ items: Item[] }>(`/items?offset=${offset}`),
   more: () => req<{ item: Item }>("/more", { method: "POST" }),
   explainBack: (itemId: string, text: string) =>
     req<{
@@ -63,6 +74,48 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ item_id: itemId, text }),
     }),
+  tts: (text: string) =>
+    req<{ key: string }>("/tts", { method: "POST", body: JSON.stringify({ text }) }),
+  onyomi: () => req<{ rules: OnyomiRule[] }>("/onyomi"),
+  seedOnyomi: () => req<{ added: number }>("/onyomi/seed", { method: "POST" }),
+  shadow: async (targetText: string, audio: Blob) => {
+    const form = new FormData();
+    form.append("target_text", targetText);
+    form.append("audio", audio, "shadow.webm");
+    const res = await fetch("/api/shadow", {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(body.error ?? "shadow failed", res.status);
+    }
+    return res.json() as Promise<{ grade: ShadowGrade; transcript: string }>;
+  },
+  // POST: the opener has a paid, non-idempotent side effect (Sonnet on a cache miss).
+  talkOpener: (itemId: string) =>
+    req<OpenerResponse>(`/talk/opener?item_id=${encodeURIComponent(itemId)}`, { method: "POST" }),
+  talk: async (itemId: string, audio: Blob, history: TalkTurn[]) => {
+    const form = new FormData();
+    form.append("item_id", itemId);
+    form.append("history", JSON.stringify(history));
+    form.append("audio", audio, "talk.webm");
+    const res = await fetch("/api/talk", {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(body.error ?? "talk failed", res.status);
+    }
+    return res.json() as Promise<TalkResponse>;
+  },
+  gloss: (word: string, context: string) =>
+    req<GlossResponse>("/gloss", { method: "POST", body: JSON.stringify({ word, context }) }),
+  saveGloss: (g: Gloss) =>
+    req<{ added: number }>("/gloss/save", { method: "POST", body: JSON.stringify(g) }),
   review: () => req<ReviewQueueResponse>("/review"),
   gradeCard: (id: string, rating: SrsRating) =>
     req<{ interval_days: number; due_at: string }>(`/review/${id}`, {
@@ -96,6 +149,17 @@ export const api = {
   subscribePush: (sub: PushSubscriptionJSON) =>
     req<{ ok: boolean }>("/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
   testPush: () => req<{ sent: number }>("/push/test", { method: "POST" }),
+  progress: () => req<ProgressResponse>("/progress"),
+  deliverables: () => req<{ deliverables: Deliverable[] }>("/deliverables"),
+  updateDeliverable: (id: string, links: { artifact_url?: string | null; notion_url?: string | null }) =>
+    req<{ ok: boolean }>(`/deliverables/${id}`, { method: "PUT", body: JSON.stringify(links) }),
+  // GET returns the blind item (404 when nothing has audio yet).
+  gauntlet: () => req<GauntletItem>("/gauntlet"),
+  gradeGauntlet: (itemId: string, text: string) =>
+    req<GauntletResult>("/gauntlet/grade", {
+      method: "POST",
+      body: JSON.stringify({ item_id: itemId, text }),
+    }),
 };
 
 /** Build an audio URL that carries the token (audio elements can't set headers). */
