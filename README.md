@@ -41,8 +41,17 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Shadowing mode | Play a sentence from today's item → record imitation → Whisper → feedback on the three contrasts Chinese speakers miss (morae / long vowels / gemination); feeds the speaking skill's trailing scores |
 | Practice hub | `練習` tab unifies kana automaticity, shadowing, and the on'yomi sheet |
 
-Deferred per spec §6/§11: gamification (XP/levels), conversation mode,
-long-read Library, Progress dashboard — the schema for them exists in
+## What ships in v0.4 (Sprint 4)
+
+| Area | Delivered |
+|------|-----------|
+| Conversation mode | `会話` tab: the bot asks a question about today's item (JP audio), the learner answers by voice → Whisper → the bot replies in graded plain Japanese with one correction; listening-first (bot turns auto-play). `GET /api/talk/opener`, `POST /api/talk` |
+| Keigo awareness | The conversation grader tags any 敬語 (尊敬/謙譲/丁寧) with its plain-form equivalent, for recognition — the bot keeps its own speech plain (the learner isn't producing keigo yet) |
+| Error recycling | Conversation mistakes feed the error log + spawn SRS cloze cards, same as explain-back |
+| TTS reuse | The v0.3 TTS cache is factored into `api/src/ttscache.ts` and reused for opener/reply audio (content-addressed in R2, synthesized at most once) |
+
+Deferred per spec §6/§11: gamification (XP/levels), long-read Library,
+Progress dashboard — the schema for them exists in
 `api/migrations/0001_init.sql` but is not yet written.
 
 ## Architecture

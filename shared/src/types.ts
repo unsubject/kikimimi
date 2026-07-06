@@ -127,6 +127,38 @@ export interface ShadowGrade {
   feedback: string;
 }
 
+// --- Conversation mode (Sprint 4) ---
+
+export interface KeigoNote {
+  form: string;
+  // Recognize-only forms (learnplan §5): 尊敬語/謙譲語. です/ます (丁寧語) is
+  // actively produced by the learner (Sprint 2/4), so it is NOT tagged here.
+  type: "尊敬" | "謙譲";
+  plain: string;
+}
+
+/** A single conversation turn held in the client and posted back for context. */
+export interface TalkTurn {
+  role: "assistant" | "user";
+  text: string;
+}
+
+export interface OpenerResponse {
+  question_jp: string;
+  // null when TTS failed transiently — the client shows text without audio (P1/§4).
+  audio_key: string | null;
+}
+
+export interface TalkResponse {
+  transcript: string;
+  reply_jp: string;
+  // null when TTS failed transiently — the paid reply is still returned (P1/§4).
+  reply_audio_key: string | null;
+  correction: string | null;
+  keigo_notes: KeigoNote[];
+  cost: CostSummary;
+}
+
 export interface ReviewCard {
   id: string;
   type: SrsCardType | string;
