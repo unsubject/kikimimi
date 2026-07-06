@@ -3,6 +3,7 @@ import type {
   ProgressResponse,
   SkillProgress,
   JlptCoverage,
+  GraduationEntry,
   Deliverable,
   GauntletItem,
   GauntletResult,
@@ -31,6 +32,12 @@ const STAGE_JP: Record<number, string> = {
   2: "S2 · 音声＋文",
   3: "S3 · 音声のみ",
 };
+
+/** Render a stored link only if it's an http(s) URL (defence-in-depth vs a
+ * javascript: value; the server already rejects non-http(s) on write). */
+function isHttpUrl(u: string): boolean {
+  return /^https?:\/\//i.test(u);
+}
 
 export function Progress() {
   const [data, setData] = useState<ProgressResponse | null>(null);
@@ -74,16 +81,17 @@ export function Progress() {
       <SkillPanel skills={data.skills} />
       <JlptPanel jlpt={data.jlpt} />
       {data.recent_accuracy.length > 0 && <AccuracyPanel scores={data.recent_accuracy} />}
-      {data.graduations.length > 0 && <GraduationPanel data={data} />}
+      {data.graduations.length > 0 && <GraduationPanel graduations={data.graduations} />}
       <GalleryPanel />
       <GauntletPanel />
 
       <div className="card">
         <strong>この先（Phase 2）</strong>
         <p className="muted" style={{ fontSize: 13 }}>
-          Phase 2 では、複数ソースの横断要約、会話の長文化、産出（発話・作文）の比重増、
-          そして「橋渡し」記事の定期公開へと進みます。まずは Sprint 6 のリスニング・
-          ガントレット合格が節目です。
+          Phase 2 は読書トラックです：新書などの実用書から始め、やがて小説へ
+          （村上春樹を先に、三島由紀夫は後で）。産出（発話・作文）の比重も少しずつ
+          増やします。まずは Sprint 6 のリスニング・ガントレット合格と「橋渡し」記事の
+          公開が節目です。
         </p>
       </div>
     </div>
@@ -112,7 +120,7 @@ function SkillPanel({ skills }: { skills: SkillProgress[] }) {
             <div className="skill-meta muted">
               {s.trailing_mean === null ? "採点なし" : `平均 ${s.trailing_mean}`}
               {" · "}
-              {s.items_at_stage_days}日
+              {s.days_at_stage}日
             </div>
           </div>
         ))}
@@ -147,7 +155,8 @@ function JlptPanel({ jlpt }: { jlpt: JlptCoverage[] }) {
 }
 
 function AccuracyPanel({ scores }: { scores: number[] }) {
-  const max = 100;
+  // Scores are already 0–100, so the bar height in % is just the score (floored
+  // at 4% so a zero still shows a sliver). 70 is the pass line (see .spark-bar.ok).
   return (
     <div className="card">
       <strong>直近の採点</strong>
@@ -156,7 +165,7 @@ function AccuracyPanel({ scores }: { scores: number[] }) {
           <div
             className={`spark-bar${v >= 70 ? " ok" : ""}`}
             key={i}
-            style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+            style={{ height: `${Math.max(4, v)}%` }}
             title={String(v)}
           />
         ))}
@@ -165,15 +174,15 @@ function AccuracyPanel({ scores }: { scores: number[] }) {
   );
 }
 
-function GraduationPanel({ data }: { data: ProgressResponse }) {
+function GraduationPanel({ graduations }: { graduations: GraduationEntry[] }) {
   return (
     <div className="card">
       <strong>昇格の記録</strong>
       <ul className="grad-list">
-        {data.graduations.map((g, i) => (
+        {graduations.map((g, i) => (
           <li key={i}>
             <span className="pill">{SKILL_JP[g.skill] ?? g.skill}</span>
-            {g.direction === "up" || g.to_stage < g.from_stage ? "🎉 " : "↩ "}
+            {g.direction === "graduate" ? "🎉 " : "↩ "}
             Stage {g.from_stage} → {g.to_stage}
             <span className="muted" style={{ fontSize: 12 }}>
               {" "}
@@ -235,7 +244,7 @@ function GalleryPanel() {
             <div className="row-inline">
               <span className="pill">S{d.sprint}</span>
               <span>{d.name}</span>
-              {d.artifact_url ? (
+              {d.artifact_url && isHttpUrl(d.artifact_url) ? (
                 <a
                   className="pill"
                   style={{ marginLeft: "auto" }}
@@ -245,6 +254,10 @@ function GalleryPanel() {
                 >
                   ✓ 開く ↗
                 </a>
+              ) : d.artifact_url ? (
+                <span className="pill" style={{ marginLeft: "auto" }}>
+                  ✓ 出荷済み
+                </span>
               ) : (
                 <button
                   style={{ marginLeft: "auto" }}

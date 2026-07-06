@@ -16,13 +16,19 @@ import type {
  * threshold below, i.e. an interval of roughly a week+).
  */
 
-/** Approximate JLPT vocabulary list sizes, used only as coverage-bar denominators. */
-export const JLPT_VOCAB_TOTALS: Record<string, number> = {
+/**
+ * Approximate NEW-word count introduced *at* each JLPT level (non-cumulative),
+ * used only as coverage-bar denominators. JMdict/JLPT tags are per-level, so the
+ * numerators (cards tagged exactly this level) must divide by per-level counts,
+ * not the cumulative list sizes — otherwise the higher bars read low.
+ * Derived from the common cumulative figures (800/1500/3700/6000/10000).
+ */
+const JLPT_VOCAB_TOTALS: Record<string, number> = {
   N5: 800,
-  N4: 1500,
-  N3: 3700,
-  N2: 6000,
-  N1: 10000,
+  N4: 700,
+  N3: 2200,
+  N2: 2300,
+  N1: 4000,
 };
 
 /** FSRS stability (days) at which a card counts as "matured" for coverage. */
@@ -41,7 +47,7 @@ export async function computeProgress(sql: Sql): Promise<ProgressResponse> {
       level: Number(r.level),
       scaffold_stage: Number(r.scaffold_stage),
       trailing_mean: mean === null ? null : Math.round(mean),
-      items_at_stage_days: Math.floor((Date.now() - entered) / DAY_MS),
+      days_at_stage: Math.floor((Date.now() - entered) / DAY_MS),
     };
   });
 

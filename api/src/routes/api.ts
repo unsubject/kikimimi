@@ -34,6 +34,18 @@ import { TTS_VOICES } from "@kikimimi/shared";
 
 const isRating = (n: unknown): n is SrsRating => n === 1 || n === 2 || n === 3 || n === 4;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Accept only http(s) links for stored deliverable URLs (blocks javascript: etc.). */
+const isHttpUrl = (u: string): boolean => {
+  try {
+    const p = new URL(u);
+    return p.protocol === "http:" || p.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
 type Vars = { sql: ReturnType<typeof openDb> };
 
 export const api = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -463,29 +475,56 @@ api.get("/deliverables", async (c) => {
 /** Attach an artifact / Notion link to a deliverable (mark it shipped). */
 api.put("/deliverables/:id", async (c) => {
   const sql = c.get("sql");
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid id" }, 400);
   const b = await c.req.json<{ artifact_url?: string | null; notion_url?: string | null }>();
-  await sql`
-    update deliverables
-    set artifact_url = ${b.artifact_url ?? null}, notion_url = ${b.notion_url ?? null}
-    where id = ${c.req.param("id")}`;
+  for (const u of [b.artifact_url, b.notion_url]) {
+    if (typeof u === "string" && u.trim() && !isHttpUrl(u)) {
+      return c.json({ error: "links must be http(s) URLs" }, 400);
+    }
+  }
+  // PATCH semantics via coalesce: only a provided key overwrites its column, so
+  // attaching an artifact link can't silently wipe an existing notion_url (an
+  // absent key binds null → coalesce keeps the current value).
+  const [row] = await sql`
+    update deliverables set
+      artifact_url = coalesce(${b.artifact_url === undefined ? null : b.artifact_url}, artifact_url),
+      notion_url   = coalesce(${b.notion_url === undefined ? null : b.notion_url}, notion_url)
+    where id = ${id}
+    returning id`;
+  if (!row) return c.json({ error: "not found" }, 404);
   return c.json({ ok: true });
 });
 
 /**
- * Listening gauntlet (spec §11 Sprint 6): a blind listening test. Serve a
- * recent item's AUDIO ONLY (no text); the learner explains what it was about,
- * graded ≥70% gist = pass. Picks the most recent item with audio.
+ * Listening gauntlet (spec §11 Sprint 6): a blind listening test. Serve an
+ * item's AUDIO ONLY (no text); the learner explains what it was about, graded
+ * ≥70% gist = pass. To keep it genuinely blind we exclude the single newest
+ * item — that is today's drop, just seen with full text on the Today view — and
+ * pick at random, so this tests retention of previously-heard audio rather than
+ * a re-listen of just-read material. Falls back to the newest only when it is
+ * the sole item with audio.
  */
 api.get("/gauntlet", async (c) => {
   const sql = c.get("sql");
-  const [row] = await sql`
-    select id, audio_r2_key, explain_back_prompt from items
-    where audio_r2_key is not null order by created_at desc limit 1`;
+  let [row] = await sql`
+    select id, audio_r2_key from items
+    where audio_r2_key is not null
+      and id <> (select id from items where audio_r2_key is not null
+                 order by created_at desc limit 1)
+    order by random() limit 1`;
+  if (!row) {
+    [row] = await sql`
+      select id, audio_r2_key from items
+      where audio_r2_key is not null order by created_at desc limit 1`;
+  }
   if (!row) return c.json({ error: "no items with audio yet" }, 404);
   return c.json({
     item_id: String(row.id),
     audio_r2_key: row.audio_r2_key ? String(row.audio_r2_key) : null,
-    prompt: String(row.explain_back_prompt ?? "聞こえた内容を説明してください。"),
+    // Deliberately generic: the item's own explain_back_prompt can name the
+    // topic and would leak the gist before the audio plays, breaking blindness.
+    prompt: "聞こえた内容を、覚えている範囲で日本語で説明してください。",
   });
 });
 

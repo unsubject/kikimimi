@@ -182,10 +182,7 @@ textarea {
   padding-left: 12px;
   margin-top: 12px;
 }
-.grade .score {
-  font-size: 28px;
-  font-weight: 700;
-}
+/* .score (font-size 28 / weight 700) is defined once in the dashboard block. */
 
 /* Cost banners */
 .banner {

@@ -195,7 +195,7 @@ export interface SkillProgress {
   level: number;
   scaffold_stage: number;
   trailing_mean: number | null;
-  items_at_stage_days: number;
+  days_at_stage: number;
 }
 
 export interface JlptCoverage {
