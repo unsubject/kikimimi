@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 
 /**
  * MediaRecorder wrapper for voice explain-backs (spec §2 voice input). Returns
@@ -48,6 +48,21 @@ export function useRecorder(): Recorder {
       setError("マイクへのアクセスが許可されませんでした。");
     }
   }, [supported]);
+
+  // On unmount (e.g. switching tabs mid-recording), tear down the recorder and
+  // stop the mic tracks so the microphone doesn't stay live until page reload.
+  useEffect(() => {
+    return () => {
+      try {
+        if (mediaRef.current && mediaRef.current.state !== "inactive") mediaRef.current.stop();
+      } catch {
+        /* already stopped */
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      mediaRef.current = null;
+    };
+  }, []);
 
   const stop = useCallback(async (): Promise<Blob | null> => {
     const rec = mediaRef.current;

@@ -57,18 +57,22 @@ export async function recordScore(
   const scores: number[] = Array.isArray(state.trailing_scores)
     ? (state.trailing_scores as number[])
     : [];
-  scores.push(Math.round(score));
+  // Clamp + coerce: the grading model's `score` is not hard-validated by forced
+  // tool use, so a stray >100 / negative / non-finite value must not poison the
+  // learner model (NaN would serialize to null → read back as 0 in the mean).
+  const s = Number(score);
+  scores.push(Number.isFinite(s) ? Math.max(0, Math.min(100, Math.round(s))) : 0);
   const trimmed = scores.slice(-10);
 
   const stage = Number(state.scaffold_stage) as ScaffoldStage;
   const enteredAt = new Date(state.stage_entered_at as string);
   const daysAtStage = (Date.now() - enteredAt.getTime()) / DAY_MS;
 
-  // Count graded items delivered since entering the current stage.
-  const [countRow] = await sql`
-    select count(*)::int as n from deliveries
-    where stage = ${stage} and delivered_at >= ${state.stage_entered_at}`;
-  const itemsAtStage = Number(countRow?.n ?? 0);
+  // "Items at stage" = graded attempts accumulated since entering this stage.
+  // We reset the trailing window on every transition (below), so its length is
+  // exactly that per-skill count — unlike deliveries.stage, which is always
+  // stamped with the *listening* stage and so can't gate the speaking skill.
+  const itemsAtStage = trimmed.length;
 
   const decision = decideStage(trimmed, stage, daysAtStage, itemsAtStage);
 
@@ -80,9 +84,12 @@ export async function recordScore(
     return null;
   }
 
+  // On a stage change, clear the trailing window: the next gate must be earned
+  // from scratch at the new stage (spec §8 "per skill, per stage"), which also
+  // stops one bad run from cascading through multiple degrades in a row.
   await sql`
     update learner_state
-    set trailing_scores = ${JSON.stringify(trimmed)},
+    set trailing_scores = '[]'::jsonb,
         scaffold_stage = ${decision.toStage},
         stage_entered_at = now(),
         updated_at = now()

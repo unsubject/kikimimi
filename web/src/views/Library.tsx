@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Item, Gloss } from "@kikimimi/shared";
-import { api, audioUrl, ApiError } from "../api.js";
+import { api, audioUrl, isHttpUrl, ApiError } from "../api.js";
 import { Player } from "../components/Player.js";
 import { RubyBody } from "../components/Ruby.js";
 
@@ -139,9 +139,11 @@ function LongRead({ item, onBack }: { item: Item; onBack: () => void }) {
         <h2 style={{ margin: "10px 0 6px" }}>{item.title_jp}</h2>
         <div>
           <span className="pill">{item.source}</span>
-          <a className="pill" href={item.url} target="_blank" rel="noreferrer">
-            出典 ↗
-          </a>
+          {isHttpUrl(item.url) && (
+            <a className="pill" href={item.url} target="_blank" rel="noreferrer">
+              出典 ↗
+            </a>
+          )}
         </div>
         {item.audio_r2_key && <Player src={audioUrl(item.audio_r2_key)} />}
         <div className="row-inline" style={{ marginTop: 10 }}>

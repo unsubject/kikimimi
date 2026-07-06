@@ -15,6 +15,12 @@ export function Player({ src }: { src: string | null }) {
     if (ref.current) ref.current.playbackRate = rate;
   }, [rate, src]);
 
+  // A new src resets the <audio> element to paused; keep the toggle label in sync
+  // so it doesn't show "⏸ 一時停止" while the freshly-swapped clip is stopped.
+  useEffect(() => {
+    setPlaying(false);
+  }, [src]);
+
   if (!src) {
     return <p className="muted">音声はまだ生成されていません（後で再試行）。</p>;
   }

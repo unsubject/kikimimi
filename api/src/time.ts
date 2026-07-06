@@ -1,8 +1,8 @@
 /**
  * Timezone helpers. The daily drop is defined in the learner's local time
- * (07:00 America/New_York per spec §3); Cloudflare cron only speaks UTC, so
- * we schedule 11:00 and 12:00 UTC and let the handler decide which one is
- * actually 7am in New York (EST vs EDT).
+ * (default 07:00 America/New_York per spec §3); Cloudflare cron only speaks
+ * UTC and runs hourly, so the handler converts to the learner's zone and fires
+ * on the first tick at/after the configured drop hour (see isDropDue).
  */
 
 export function hourInZone(date: Date, tz: string): number {
@@ -29,8 +29,13 @@ export function monthInZone(date: Date, tz: string): string {
   return dayInZone(date, tz).slice(0, 7);
 }
 
-/** True when `date` falls in the drop hour ("07:00" → hour 7) of the zone. */
-export function isDropHour(date: Date, tz: string, dropTime: string): boolean {
+/**
+ * True when the local time in `tz` is at or past the configured drop hour
+ * ("07:00" → hour 7). Paired with a once-per-day delivery guard and an hourly
+ * cron, this delivers exactly once, at the first tick on/after the drop hour —
+ * so any drop_time works, not only the two hours the old fixed cron covered.
+ */
+export function isDropDue(date: Date, tz: string, dropTime: string): boolean {
   const dropHour = Number(dropTime.split(":")[0] ?? "7");
-  return hourInZone(date, tz) === dropHour;
+  return hourInZone(date, tz) >= dropHour;
 }

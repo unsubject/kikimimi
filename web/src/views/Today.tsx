@@ -162,8 +162,10 @@ export function Today() {
             )}
           </div>
 
-          {/* Key vocab — meanings behind tap-reveal too */}
-          {item.vocab.length > 0 && (
+          {/* Key vocab — meanings behind tap-reveal too. Hidden at S3 until the
+              text is revealed, so the audio-only stage isn't given away the
+              item's content words + readings up front (scaffold contract). */}
+          {item.vocab.length > 0 && !(stage === 3 && !textRevealed) && (
             <div className="card">
               <strong>語彙</strong>
               <div className="vocab">

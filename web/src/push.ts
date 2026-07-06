@@ -38,8 +38,11 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string }> {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return { ok: false, reason: "通知が許可されませんでした。" };
 
-  const reg = (await navigator.serviceWorker.ready) ?? (await registerServiceWorker());
+  // Register explicitly first (idempotent): navigator.serviceWorker.ready never
+  // resolves if registration failed, so awaiting it alone could hang forever.
+  const reg = await registerServiceWorker();
   if (!reg) return { ok: false, reason: "Service Worker を登録できませんでした。" };
+  await navigator.serviceWorker.ready; // wait until it's active before subscribing
 
   const { vapidPublicKey } = await api.config();
   const sub = await reg.pushManager.subscribe({

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, audioUrl, ApiError } from "./api.js";
 
 /**
@@ -15,6 +15,14 @@ export function useTts() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Stop playback if the owning view unmounts (the Audio element is detached).
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
 
   const play = useCallback(async (text: string) => {
     const t = text.trim();
