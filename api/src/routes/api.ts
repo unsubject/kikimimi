@@ -7,12 +7,20 @@ import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
 import { sendPush } from "../push.js";
 import { monthInZone } from "../time.js";
-import { dueCards, dueCount, gradeCard, harvestError, harvestOnyomi } from "../cards.js";
+import {
+  dueCards,
+  dueCount,
+  gradeCard,
+  harvestError,
+  harvestOnyomi,
+  harvestVocab,
+} from "../cards.js";
 import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
 import { gradeShadowing } from "../shadow.js";
 import { ONYOMI_RULES } from "../content/onyomi.js";
 import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
 import { conversationOpener, conversationTurn } from "../converse.js";
+import { glossWord } from "../gloss.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -119,16 +127,20 @@ api.get("/today", async (c) => {
   return c.json(body);
 });
 
-/** Library: past items (metadata only for v0.1). */
+/** Library: past items (metadata only). Offset-paginated so the Library can
+ * page through *all* past items (spec §5), not just the newest 30. */
 api.get("/items", async (c) => {
   const sql = c.get("sql");
+  // Clamp query params so a malformed/huge ?limit can't blow up the query.
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 30, 1), 100);
+  const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
   const rows = await sql`
     select i.*, d.stage, d.delivered_at
     from items i left join lateral (
       select stage, delivered_at from deliveries d
       where d.item_id = i.id order by delivered_at desc limit 1
     ) d on true
-    order by i.created_at desc limit 30`;
+    order by i.created_at desc limit ${limit} offset ${offset}`;
   return c.json({ items: rows.map((r) => rowToItem(r)) });
 });
 
@@ -367,6 +379,71 @@ api.post("/push/test", async (c) => {
     ),
   );
   return c.json({ sent: results.length, results });
+});
+
+/**
+ * Word-tap gloss for the Library long-read (spec §5). Cache-checked by the
+ * tapped surface form so repeat taps are free; a miss calls the grading model
+ * once (governor-gated) and caches the result.
+ */
+api.post("/gloss", async (c) => {
+  const sql = c.get("sql");
+  const { word, context } = await c.req.json<{ word: string; context?: string }>();
+  const w = (word ?? "").trim();
+  if (!w) return c.json({ error: "word required" }, 400);
+  if (w.length > 40) return c.json({ error: "word too long" }, 400);
+
+  // Cached by surface form; return the stored lemma as `word` so add-to-SRS
+  // saves the dictionary form, not the inflected surface (P3).
+  const [cached] = await sql`
+    select reading, meaning_zh, jlpt, lemma from glosses where word = ${w}`;
+  if (cached) {
+    return c.json({
+      gloss: {
+        word: cached.lemma ? String(cached.lemma) : w,
+        reading: String(cached.reading),
+        meaning_zh: String(cached.meaning_zh),
+        jlpt: cached.jlpt ? String(cached.jlpt) : "N3",
+      },
+      cached: true,
+    });
+  }
+
+  // Only a cache miss is billed, so read tz (a user_settings query) lazily here (P7).
+  const tz = await TZ(sql);
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
+
+  // Defensively cap the context — the client sends one sentence, but bound it
+  // regardless so a runaway payload can't inflate per-tap token cost (P2).
+  const ctx = (context ?? "").slice(0, 400);
+  const { gloss, usd } = await glossWord(c.env, w, ctx);
+  await logCost(sql, tz, "gloss", usd);
+  await sql`
+    insert into glosses (word, lemma, reading, meaning_zh, jlpt)
+    values (${w}, ${gloss.word}, ${gloss.reading}, ${gloss.meaning_zh}, ${gloss.jlpt})
+    on conflict (word) do nothing`;
+  // gloss.word is the model's lemma → returning it makes /gloss/save store the lemma (P3).
+  return c.json({ gloss, cached: false });
+});
+
+/** Add a tapped/glossed word to the SRS deck as a vocab card (spec §5). */
+api.post("/gloss/save", async (c) => {
+  const sql = c.get("sql");
+  const b = await c.req.json<{ word: string; reading: string; meaning_zh?: string; jlpt?: string }>();
+  if (!b.word?.trim() || !b.reading?.trim()) {
+    return c.json({ error: "word and reading required" }, 400);
+  }
+  const jlpt = (["N5", "N4", "N3", "N2", "N1"].includes(b.jlpt ?? "") ? b.jlpt : "N3") as
+    | "N5"
+    | "N4"
+    | "N3"
+    | "N2"
+    | "N1";
+  const added = await harvestVocab(sql, "manual", [
+    { word: b.word.trim(), reading: b.reading.trim(), meaning_zh: b.meaning_zh ?? "", jlpt },
+  ]);
+  return c.json({ added });
 });
 
 /** Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). */

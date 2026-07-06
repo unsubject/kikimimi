@@ -159,6 +159,20 @@ export interface TalkResponse {
   cost: CostSummary;
 }
 
+// --- Library word-tap gloss (Sprint 5) ---
+
+export interface Gloss {
+  word: string;
+  reading: string;
+  meaning_zh: string;
+  jlpt: "N5" | "N4" | "N3" | "N2" | "N1" | string;
+}
+
+export interface GlossResponse {
+  gloss: Gloss;
+  cached: boolean;
+}
+
 export interface ReviewCard {
   id: string;
   type: SrsCardType | string;
