@@ -1,6 +1,7 @@
 import type { VocabEntry } from "@kikimimi/shared";
 import type { Sql } from "./db.js";
 import { scheduleNew, scheduleReview, type FsrsState, type Rating } from "./srs.js";
+import { onyomiCards } from "./content/onyomi.js";
 
 /**
  * SRS card persistence for the Review surface (spec §5). FSRS memory state and
@@ -35,6 +36,31 @@ export async function harvestVocab(
         ${JSON.stringify({ word: v.word })},
         ${JSON.stringify({ reading: v.reading, meaning_zh: v.meaning_zh })},
         ${v.jlpt}, ${itemId}, ${JSON.stringify({ status: "new" })}, now()
+      )`;
+    added += 1;
+  }
+  return added;
+}
+
+/**
+ * Seed the Cantonese→on'yomi correspondence pack into the deck (Sprint 3).
+ * Front = character + Cantonese reading; back = on'yomi + which rule. Idempotent
+ * (deduped by hanzi). Returns how many new cards were added.
+ */
+export async function harvestOnyomi(sql: Sql): Promise<number> {
+  let added = 0;
+  for (const card of onyomiCards()) {
+    const [existing] = await sql`
+      select 1 from srs_cards
+      where type = 'onyomi' and front->>'hanzi' = ${card.hanzi} limit 1`;
+    if (existing) continue;
+    await sql`
+      insert into srs_cards (type, front, back, jlpt_level, source_ref, fsrs_state, due_at)
+      values (
+        'onyomi',
+        ${JSON.stringify({ hanzi: card.hanzi, cantonese: card.cantonese })},
+        ${JSON.stringify({ kana: card.kana, romaji: card.romaji, pattern: card.pattern, rule: card.ruleId })},
+        null, ${card.ruleId}, ${JSON.stringify({ status: "new" })}, now()
       )`;
     added += 1;
   }

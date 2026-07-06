@@ -100,7 +100,32 @@ export interface PushSubscriptionJSON {
 /** 1 = Again, 2 = Hard, 3 = Good, 4 = Easy. */
 export type SrsRating = 1 | 2 | 3 | 4;
 
-export type SrsCardType = "vocab" | "error_cloze";
+export type SrsCardType = "vocab" | "error_cloze" | "onyomi";
+
+// --- Cantonese → on'yomi (Sprint 3) ---
+
+export interface OnyomiExample {
+  hanzi: string;
+  cantonese: string;
+  kana: string;
+  romaji: string;
+}
+
+export interface OnyomiRule {
+  id: string;
+  cantoneseFinal: string;
+  japanesePattern: string;
+  note: string;
+  examples: OnyomiExample[];
+}
+
+export interface ShadowGrade {
+  score: number;
+  mora_ok: boolean;
+  long_vowel_ok: boolean;
+  gemination_ok: boolean;
+  feedback: string;
+}
 
 export interface ReviewCard {
   id: string;

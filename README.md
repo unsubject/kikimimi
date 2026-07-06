@@ -33,6 +33,14 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Review surface | `復習` tab: due queue capped by the daily setting, recall-then-reveal, four FSRS ratings (もう一度/むずかしい/できた/かんたん) |
 | Voice explain-back | `🎤 声で説明` — MediaRecorder → Whisper (`whisper-1`, ja) → same grader; audio stored in R2, transcript shown |
 
+## What ships in v0.3 (Sprint 3)
+
+| Area | Delivered |
+|------|-----------|
+| Cantonese→on'yomi pack | Correspondence table (`api/src/content/onyomi.ts`) for the entering-tone (-p/-t/-k) and nasal (-m/-n/-ng) finals with worked examples; published as an in-app cheat sheet and seeded into the SRS deck as an `onyomi` card pack |
+| Shadowing mode | Play a sentence from today's item → record imitation → Whisper → feedback on the three contrasts Chinese speakers miss (morae / long vowels / gemination); feeds the speaking skill's trailing scores |
+| Practice hub | `練習` tab unifies kana automaticity, shadowing, and the on'yomi sheet |
+
 Deferred per spec §6/§11: gamification (XP/levels), conversation mode,
 long-read Library, Progress dashboard — the schema for them exists in
 `api/migrations/0001_init.sql` but is not yet written.
