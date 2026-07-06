@@ -10,6 +10,25 @@ import type { PushSubscriptionJSON } from "@kikimimi/shared";
 
 const app = new Hono<{ Bindings: Env }>();
 
+/**
+ * Public diagnostic (no auth) — confirms which config bindings the running
+ * Worker actually has, WITHOUT revealing any secret value. `app_token_len` lets
+ * you spot a stray trailing character (a common paste artifact) that would make
+ * the stored secret silently not match what you type. Registered before the
+ * authed /api sub-app so it stays reachable. Safe to leave in place.
+ */
+app.get("/api/health", (c) =>
+  c.json({
+    ok: true,
+    app_token_configured: !!c.env.APP_TOKEN,
+    app_token_len: c.env.APP_TOKEN?.length ?? 0,
+    anthropic_key_configured: !!c.env.ANTHROPIC_API_KEY,
+    openai_key_configured: !!c.env.OPENAI_API_KEY,
+    hyperdrive_configured: !!c.env.HYPERDRIVE?.connectionString,
+    vapid_configured: !!c.env.VAPID_PUBLIC_KEY && !!c.env.VAPID_PRIVATE_KEY,
+  }),
+);
+
 app.route("/api", api);
 
 /**
