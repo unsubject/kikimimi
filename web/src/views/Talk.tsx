@@ -7,12 +7,12 @@ import { useRecorder } from "../useRecorder.js";
  * Conversation mode (spec §4 Talk; learning plan Sprint 4). The bot asks a
  * question about today's item (JP audio); the learner answers by voice; the bot
  * replies in graded plain Japanese with one correction and tags any keigo for
- * awareness. Listening-first: bot turns auto-play.
+ * awareness. Listening-first: bot turns auto-play once started by a user tap.
  */
 interface Exchange {
   role: "assistant" | "user";
   text: string;
-  audioKey?: string;
+  audioKey?: string | null; // null when TTS failed transiently → no replay button
   correction?: string | null;
   keigo?: KeigoNote[];
 }
@@ -20,13 +20,15 @@ interface Exchange {
 export function Talk() {
   const [itemId, setItemId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [started, setStarted] = useState(false);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recorder = useRecorder();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const playAudio = (key: string) => {
+  const playAudio = (key: string | null | undefined) => {
+    if (!key) return; // no audio (TTS failed) → nothing to play
     const el = audioRef.current ?? (audioRef.current = new Audio());
     el.src = audioUrl(key);
     el.currentTime = 0;
@@ -35,26 +37,38 @@ export function Talk() {
     });
   };
 
+  // Fetch today's item on mount only for the item_id + no-item state; defer the
+  // opener to a user tap (P12) so its autoplay isn't blocked and we don't bill an
+  // opener for a tab that's opened but never used.
   useEffect(() => {
     (async () => {
       try {
         const t = await api.today();
-        if (!t.item) {
-          setLoading(false);
-          return;
-        }
-        setItemId(t.item.id);
-        const opener = await api.talkOpener(t.item.id);
-        setExchanges([{ role: "assistant", text: opener.question_jp, audioKey: opener.audio_key }]);
-        playAudio(opener.audio_key);
+        if (t.item) setItemId(t.item.id);
       } catch (e) {
         setError(e instanceof ApiError ? e.message : "会話を開始できませんでした。");
       } finally {
         setLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Kick off the conversation within a user gesture, so the opener audio auto-plays.
+  const start = async () => {
+    if (!itemId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const opener = await api.talkOpener(itemId);
+      setStarted(true);
+      setExchanges([{ role: "assistant", text: opener.question_jp, audioKey: opener.audio_key }]);
+      playAudio(opener.audio_key);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "会話を開始できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const history = (): TalkTurn[] => exchanges.map((e) => ({ role: e.role, text: e.text }));
 
@@ -105,33 +119,51 @@ export function Talk() {
       <div className="card">
         <strong>会話</strong>
         <p className="muted" style={{ fontSize: 13 }}>
-          先生の質問に、日本語の声で答えてみましょう。うまく言えなくて大丈夫。
+          先生の質問に、日本語の声で答えてみましょう。うまく言えなくても大丈夫。
         </p>
       </div>
 
-      {exchanges.map((ex, i) => (
-        <Bubble key={i} ex={ex} onPlay={ex.audioKey ? () => playAudio(ex.audioKey!) : undefined} />
-      ))}
-
       {error && <div className="banner stop">{error}</div>}
 
-      <div className="card">
-        <div className="row-inline">
-          {recorder.supported ? (
-            <button className="primary" onClick={toggle} disabled={busy}>
-              {recorder.recording ? "⏹ 停止して送信" : "🎤 声で答える"}
+      {!started ? (
+        // Gate the opener behind a tap so autoplay works and an unused tab isn't billed (P12).
+        <div className="card">
+          <div className="row-inline">
+            <button className="primary" onClick={start} disabled={busy}>
+              会話をはじめる
             </button>
-          ) : (
-            <span className="muted">この端末は録音に対応していません。</span>
-          )}
-        </div>
-        {recorder.recording && (
-          <div className="recorder">
-            <span className="rec-dot" /> 録音中…
           </div>
-        )}
-        {busy && <p className="muted">先生が考えています…</p>}
-      </div>
+          {busy && <p className="muted">先生が質問を考えています…</p>}
+        </div>
+      ) : (
+        <>
+          {exchanges.map((ex, i) => (
+            <Bubble
+              key={i}
+              ex={ex}
+              onPlay={ex.audioKey ? () => playAudio(ex.audioKey!) : undefined}
+            />
+          ))}
+
+          <div className="card">
+            <div className="row-inline">
+              {recorder.supported ? (
+                <button className="primary" onClick={toggle} disabled={busy}>
+                  {recorder.recording ? "⏹ 停止して送信" : "🎤 声で答える"}
+                </button>
+              ) : (
+                <span className="muted">この端末は録音に対応していません。</span>
+              )}
+            </div>
+            {recorder.recording && (
+              <div className="recorder">
+                <span className="rec-dot" /> 録音中…
+              </div>
+            )}
+            {busy && <p className="muted">先生が考えています…</p>}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -164,9 +196,9 @@ function Bubble({ ex, onPlay }: { ex: Exchange; onPlay?: () => void }) {
       )}
       {ex.keigo && ex.keigo.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <span className="muted" style={{ fontSize: 12 }}>敬語に気づく：</span>
+          <span className="muted" style={{ fontSize: 12 }}>敬語に注目：</span>
           {ex.keigo.map((k, i) => (
-            <span key={i} className="pill" title={`${k.type} ← ${k.plain}`}>
+            <span key={i} className="pill" title={`${k.form} → ${k.plain}`}>
               {k.form}（{k.type}）
             </span>
           ))}

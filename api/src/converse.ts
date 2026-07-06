@@ -1,33 +1,24 @@
 import type { Env } from "./env.js";
+import type { KeigoNote, TalkTurn } from "@kikimimi/shared";
 import { generateStructured, type JsonSchema } from "./anthropic.js";
 
 /**
  * Conversation mode (spec §4 Talk; learning plan Sprint 4). The bot asks a
  * question about the day's item; the learner answers by voice; the bot replies
- * in graded, plain Japanese with ONE targeted correction, and tags any keigo
- * (敬語) present for awareness — "recognize 敬語, don't produce it yet."
+ * in graded, plain Japanese with ONE targeted correction, and tags any 尊敬語/
+ * 謙譲語 present for awareness — "recognize 敬語, don't produce it yet" (§5).
  *
  * The exchange is generative, so this uses the generation model. History is
  * held client-side and passed back in, keeping the server stateless per turn.
  */
 
-export interface KeigoNote {
-  form: string; // the keigo expression spotted
-  type: "尊敬" | "謙譲" | "丁寧"; // sonkeigo / kenjougo / teineigo
-  plain: string; // its plain-form equivalent, for awareness
-}
-
+// Server-only reply shape (adds error-log fields not sent to the client).
 export interface ConversationReply {
   reply_jp: string; // the bot's next turn, plain spoken Japanese
   correction: string | null; // one targeted correction of the learner's Japanese, or null if clean
   keigo_notes: KeigoNote[]; // keigo recognised in the exchange (awareness only)
   error_category: string | null; // for the error log (particle | conjugation | vocab | …) or null
   error_detail: string | null;
-}
-
-export interface ConversationTurn {
-  role: "assistant" | "user";
-  text: string;
 }
 
 const REPLY_SCHEMA: JsonSchema = {
@@ -48,14 +39,14 @@ const REPLY_SCHEMA: JsonSchema = {
     keigo_notes: {
       type: "array",
       description:
-        "Any keigo (敬語) forms present in the learner's utterance or that would naturally appear — for awareness only. Empty if none.",
+        "Tag only 尊敬語/謙譲語 (honorific/humble) forms ACTUALLY PRESENT in the learner's utterance — do NOT tag です/ます, which the learner already uses correctly; empty if none.",
       items: {
         type: "object",
         additionalProperties: false,
         required: ["form", "type", "plain"],
         properties: {
           form: { type: "string" },
-          type: { type: "string", enum: ["尊敬", "謙譲", "丁寧"] },
+          type: { type: "string", enum: ["尊敬", "謙譲"] },
           plain: { type: "string", description: "The plain-form equivalent." },
         },
       },
@@ -89,11 +80,14 @@ const OPENER_SCHEMA: JsonSchema = {
   },
 };
 
+// §4 feedback-tone guard: direct/concrete, zero cheerleading, ONE correction/turn.
+// Speak plain です/ます — not casual 常体, not keigo (the learner isn't producing keigo yet).
 const CONVERSATION_SYSTEM =
-  "You are a warm, patient Japanese conversation partner for an advanced-beginner learner (native Cantonese/Chinese speaker). " +
-  "Speak plain, natural, spoken Japanese at their level — simple sentences, common words. This is listening-first practice: your turns will be read aloud by TTS. " +
-  "Give at most ONE correction per turn, kind and concrete; if their Japanese was fine, don't invent one. " +
-  "Recognise and tag any 敬語 (keigo) for their awareness, but keep your own speech plain — they are not producing keigo yet. Always end your reply with a question.";
+  "You are a patient Japanese conversation partner for an advanced-beginner learner (native Cantonese/Chinese speaker). " +
+  "Speak plain, functional です/ます-level Japanese at their level (NOT casual 常体, NOT keigo) — simple sentences, common words. This is listening-first practice: your turns will be read aloud by TTS. " +
+  "Be direct and concrete, with zero cheerleading filler — no praise like 上手ですね, only natural 相槌. " +
+  "Give at most ONE correction per turn, concrete and specific; if their Japanese was fine, give none. " +
+  "Recognise and tag any 尊敬語/謙譲語 for their awareness, but keep your own speech plain です/ます. Always end your reply with a question.";
 
 /** The bot's opening question about today's item. */
 export async function conversationOpener(
@@ -123,7 +117,7 @@ export interface TurnResult {
 export async function conversationTurn(
   env: Env,
   item: { title_jp: string; script_jp: string },
-  history: ConversationTurn[],
+  history: TalkTurn[],
   userText: string,
 ): Promise<TurnResult> {
   const transcript = history

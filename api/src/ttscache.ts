@@ -1,6 +1,7 @@
 import type { Env } from "./env.js";
 import type { Sql } from "./db.js";
 import type { TtsVoice } from "@kikimimi/shared";
+import { TTS_VOICES } from "@kikimimi/shared";
 import { synthesize } from "./tts.js";
 import { logCost, ttsCostUsd } from "./cost.js";
 
@@ -28,16 +29,20 @@ export async function synthCached(
   text: string,
   voice: TtsVoice,
 ): Promise<string> {
-  const key = `tts/${await sha256hex(`${voice}:${text}`)}.mp3`;
+  // Defensively cap length so a runaway generated reply can't inflate TTS cost (P7).
+  const capped = text.slice(0, TTS_MAX_CHARS);
+  const key = `tts/${await sha256hex(`${voice}:${capped}`)}.mp3`;
   if (await env.AUDIO.head(key)) return key; // cache hit — no synthesis, no cost
-  const audio = await synthesize(env, text, voice);
+  const audio = await synthesize(env, capped, voice);
   await env.AUDIO.put(key, audio, { httpMetadata: { contentType: "audio/mpeg" } });
-  await logCost(sql, tz, "tts", ttsCostUsd(text.length));
+  await logCost(sql, tz, "tts", ttsCostUsd(capped.length));
   return key;
 }
 
-/** Read the single-user TTS voice preference. */
+/** Read the single-user TTS voice preference, validated against the allow-list. */
 export async function currentVoice(sql: Sql): Promise<TtsVoice> {
   const [s] = await sql`select tts_voice from user_settings where id = 1`;
-  return (String(s?.tts_voice ?? "nova") as TtsVoice) ?? "nova";
+  const stored = String(s?.tts_voice ?? "");
+  // Only trust a value that is a known voice; otherwise fall back to the default.
+  return (TTS_VOICES as string[]).includes(stored) ? (stored as TtsVoice) : "nova";
 }

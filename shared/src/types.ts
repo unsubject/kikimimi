@@ -131,7 +131,9 @@ export interface ShadowGrade {
 
 export interface KeigoNote {
   form: string;
-  type: "尊敬" | "謙譲" | "丁寧";
+  // Recognize-only forms (learnplan §5): 尊敬語/謙譲語. です/ます (丁寧語) is
+  // actively produced by the learner (Sprint 2/4), so it is NOT tagged here.
+  type: "尊敬" | "謙譲";
   plain: string;
 }
 
@@ -143,13 +145,15 @@ export interface TalkTurn {
 
 export interface OpenerResponse {
   question_jp: string;
-  audio_key: string;
+  // null when TTS failed transiently — the client shows text without audio (P1/§4).
+  audio_key: string | null;
 }
 
 export interface TalkResponse {
   transcript: string;
   reply_jp: string;
-  reply_audio_key: string;
+  // null when TTS failed transiently — the paid reply is still returned (P1/§4).
+  reply_audio_key: string | null;
   correction: string | null;
   keigo_notes: KeigoNote[];
   cost: CostSummary;

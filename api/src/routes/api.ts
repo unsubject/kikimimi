@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../env.js";
 import { closeDb, openDb } from "../db.js";
 import { readSpend, summarize, logCost } from "../cost.js";
@@ -12,13 +12,14 @@ import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
 import { gradeShadowing } from "../shadow.js";
 import { ONYOMI_RULES } from "../content/onyomi.js";
 import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
-import { conversationOpener, conversationTurn, type ConversationTurn } from "../converse.js";
+import { conversationOpener, conversationTurn } from "../converse.js";
 import type {
   ScaffoldStage,
   TodayResponse,
   PushSubscriptionJSON,
   ReviewQueueResponse,
   SrsRating,
+  TalkTurn,
 } from "@kikimimi/shared";
 import { TTS_VOICES } from "@kikimimi/shared";
 
@@ -53,6 +54,45 @@ const TZ = async (sql: Vars["sql"]): Promise<string> => {
   const [s] = await sql`select tz from user_settings where id = 1`;
   return String(s?.tz ?? "America/New_York");
 };
+
+/**
+ * Cost governor gate (spec §10): if today is degraded or the monthly breaker
+ * tripped, decline the paid action with 402. Returns the response to send, or
+ * null to proceed — centralises the check duplicated across every paid endpoint.
+ */
+async function budgetGate(
+  c: Context<{ Bindings: Env; Variables: Vars }>,
+  sql: Vars["sql"],
+  tz: string,
+): Promise<Response | null> {
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+  return null;
+}
+
+type AudioBlobResult =
+  | { audio: ArrayBuffer; mime: string }
+  | { error: string; status: 400 | 413 | 415 };
+
+/**
+ * Validate + buffer a multipart audio entry uniformly across the voice routes:
+ * presence (400), size ≤10MB (413), and a set-but-non-audio MIME (415). Some
+ * MediaRecorder outputs omit a type, so only reject a type that is set.
+ */
+async function readAudioBlob(entry: unknown): Promise<AudioBlobResult> {
+  if (!entry || typeof entry === "string") {
+    return { error: "audio required", status: 400 };
+  }
+  // workers-types under-types FormData file entries; it is a Blob at runtime.
+  const blob = entry as unknown as Blob;
+  if (blob.size > 10_000_000) return { error: "audio_too_large", status: 413 };
+  if (blob.type && !blob.type.startsWith("audio/")) {
+    return { error: "unsupported_media_type", status: 415 };
+  }
+  return { audio: await blob.arrayBuffer(), mime: blob.type || "audio/webm" };
+}
 
 /** VAPID public key for the client to subscribe with. */
 api.get("/config", (c) =>
@@ -109,12 +149,9 @@ api.post("/explain-back", async (c) => {
     return c.json({ error: "item_id and text required" }, 400);
   }
 
-  // Governor: if degraded/breaker-tripped, decline grading gracefully.
-  const spend = await readSpend(sql, tz);
-  const summary = summarize(spend);
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  // Governor: if degraded/breaker-tripped, decline grading gracefully (spec §10).
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const [item] = await sql`select * from items where id = ${body.item_id}`;
   if (!item) return c.json({ error: "not found" }, 404);
@@ -163,33 +200,20 @@ api.post("/explain-back/voice", async (c) => {
   const sql = c.get("sql");
   const tz = await TZ(sql);
 
-  const summary = summarize(await readSpend(sql, tz));
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const form = await c.req.formData();
   const itemId = String(form.get("item_id") ?? "");
-  const entry = form.get("audio");
-  if (!itemId || !entry || typeof entry === "string") {
-    return c.json({ error: "item_id and audio required" }, 400);
-  }
-  // workers-types under-types FormData file entries; it is a Blob at runtime.
-  const blob = entry as unknown as Blob;
-  // Bound the upload before we buffer/transcribe it (some MediaRecorder outputs
-  // omit a type, so only reject a type that is set and clearly non-audio).
-  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
-  if (blob.type && !blob.type.startsWith("audio/")) {
-    return c.json({ error: "unsupported_media_type" }, 415);
-  }
+  if (!itemId) return c.json({ error: "item_id required" }, 400);
+  const blobResult = await readAudioBlob(form.get("audio"));
+  if ("error" in blobResult) return c.json({ error: blobResult.error }, blobResult.status);
+  const { audio, mime } = blobResult;
 
   const [item] = await sql`select * from items where id = ${itemId}`;
   if (!item) return c.json({ error: "not found" }, 404);
 
-  const audio = await blob.arrayBuffer();
-  const mime = blob.type || "audio/webm";
   const voiceKey = `voice/${crypto.randomUUID()}.${mime.includes("webm") ? "webm" : "ogg"}`;
-  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
 
   const { text: transcript } = await transcribe(c.env, audio, mime);
   await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
@@ -198,6 +222,9 @@ api.post("/explain-back/voice", async (c) => {
   if (!transcript.trim()) {
     return c.json({ error: "empty_transcript" }, 422);
   }
+
+  // Persist the recording only now we know there's speech (no orphan R2 object on silence, P8).
+  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
 
   const [resp] = await sql`
     insert into responses (item_id, mode, voice_r2_key, transcript)
@@ -367,10 +394,8 @@ api.post("/tts", async (c) => {
   }
 
   // Governor: TTS is a paid action, so gate it like /explain-back (spec §10).
-  const summary = summarize(await readSpend(sql, tz));
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const key = await synthCached(c.env, sql, tz, trimmed, await currentVoice(sql));
   return c.json({ key });
@@ -384,26 +409,16 @@ api.post("/shadow", async (c) => {
   const sql = c.get("sql");
   const tz = await TZ(sql);
 
-  const summary = summarize(await readSpend(sql, tz));
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const form = await c.req.formData();
   const targetText = String(form.get("target_text") ?? "").trim();
-  const entry = form.get("audio");
-  if (!targetText || !entry || typeof entry === "string") {
-    return c.json({ error: "target_text and audio required" }, 400);
-  }
-  const blob = entry as unknown as Blob;
-  // Bound the upload before we buffer/transcribe it (some MediaRecorder outputs
-  // omit a type, so only reject a type that is set and clearly non-audio).
-  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
-  if (blob.type && !blob.type.startsWith("audio/")) {
-    return c.json({ error: "unsupported_media_type" }, 415);
-  }
-  const audio = await blob.arrayBuffer();
-  const mime = blob.type || "audio/webm";
+  if (!targetText) return c.json({ error: "target_text required" }, 400);
+  const blobResult = await readAudioBlob(form.get("audio"));
+  if ("error" in blobResult) return c.json({ error: blobResult.error }, blobResult.status);
+  // Shadowing does not persist the recording — only the grade matters.
+  const { audio, mime } = blobResult;
 
   const { text: transcript } = await transcribe(c.env, audio, mime);
   await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
@@ -424,28 +439,48 @@ api.post("/shadow", async (c) => {
 
 /**
  * Conversation opener (spec §4 Talk): the bot asks a question about today's
- * item, returned as text + synthesized audio (listening-first).
+ * item, returned as text + synthesized audio (listening-first). POST because it
+ * has a paid, non-idempotent side effect (Sonnet generation on a cache miss).
  */
-api.get("/talk/opener", async (c) => {
+api.post("/talk/opener", async (c) => {
   const sql = c.get("sql");
   const tz = await TZ(sql);
   const itemId = c.req.query("item_id");
   if (!itemId) return c.json({ error: "item_id required" }, 400);
 
-  const summary = summarize(await readSpend(sql, tz));
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const [item] = await sql`select title_jp, script_jp from items where id = ${itemId}`;
   if (!item) return c.json({ error: "not found" }, 404);
 
-  const { question_jp, usd } = await conversationOpener(c.env, {
-    title_jp: String(item.title_jp),
-    script_jp: String(item.script_jp),
-  });
-  await logCost(sql, tz, "conversation", usd);
-  const audio_key = await synthCached(c.env, sql, tz, question_jp, await currentVoice(sql));
+  // Cache the opener server-side so re-entering 会話 doesn't re-bill Sonnet (P4).
+  // On reuse the TTS below is a cache hit on the identical text → free.
+  const [cached] = await sql`
+    select raw_text from responses
+    where item_id = ${itemId} and mode = 'conversation_opener' limit 1`;
+  let question_jp: string;
+  if (cached) {
+    question_jp = String(cached.raw_text);
+  } else {
+    const opener = await conversationOpener(c.env, {
+      title_jp: String(item.title_jp),
+      script_jp: String(item.script_jp),
+    });
+    question_jp = opener.question_jp;
+    await logCost(sql, tz, "conversation", opener.usd);
+    await sql`
+      insert into responses (item_id, mode, raw_text)
+      values (${itemId}, 'conversation_opener', ${question_jp})`;
+  }
+
+  // A transient TTS failure must not discard the (paid) question — return it with a null key (P1).
+  let audio_key: string | null = null;
+  try {
+    audio_key = await synthCached(c.env, sql, tz, question_jp, await currentVoice(sql));
+  } catch {
+    audio_key = null;
+  }
   return c.json({ question_jp, audio_key });
 });
 
@@ -458,42 +493,38 @@ api.post("/talk", async (c) => {
   const sql = c.get("sql");
   const tz = await TZ(sql);
 
-  const summary = summarize(await readSpend(sql, tz));
-  if (summary.degraded || summary.monthly_breaker) {
-    return c.json({ error: "cost_limited", cost: summary }, 402);
-  }
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
 
   const form = await c.req.formData();
   const itemId = String(form.get("item_id") ?? "");
-  const entry = form.get("audio");
-  if (!itemId || !entry || typeof entry === "string") {
-    return c.json({ error: "item_id and audio required" }, 400);
-  }
-  const blob = entry as unknown as Blob;
-  if (blob.size > 10_000_000) return c.json({ error: "audio_too_large" }, 413);
-  if (blob.type && !blob.type.startsWith("audio/")) {
-    return c.json({ error: "unsupported_media_type" }, 415);
-  }
+  if (!itemId) return c.json({ error: "item_id required" }, 400);
+  const blobResult = await readAudioBlob(form.get("audio"));
+  if ("error" in blobResult) return c.json({ error: blobResult.error }, blobResult.status);
+  const { audio, mime } = blobResult;
 
-  let history: ConversationTurn[] = [];
+  let history: TalkTurn[] = [];
   try {
     const raw = form.get("history");
-    if (typeof raw === "string" && raw) history = JSON.parse(raw) as ConversationTurn[];
+    if (typeof raw === "string" && raw) history = JSON.parse(raw) as TalkTurn[];
   } catch {
     history = [];
   }
+  // Bound the client-supplied history: coerce non-arrays and cap to the last 12 turns (P6).
+  if (!Array.isArray(history)) history = [];
+  history = history.slice(-12);
 
   const [item] = await sql`select title_jp, script_jp from items where id = ${itemId}`;
   if (!item) return c.json({ error: "not found" }, 404);
 
-  const audio = await blob.arrayBuffer();
-  const mime = blob.type || "audio/webm";
   const voiceKey = `voice/${crypto.randomUUID()}.${mime.includes("webm") ? "webm" : "ogg"}`;
-  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
 
   const { text: transcript } = await transcribe(c.env, audio, mime);
   await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
   if (!transcript.trim()) return c.json({ error: "empty_transcript" }, 422);
+
+  // Persist the recording only now we know there's speech (no orphan R2 object on silence, P8).
+  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
 
   await sql`
     insert into responses (item_id, mode, voice_r2_key, transcript)
@@ -514,7 +545,14 @@ api.post("/talk", async (c) => {
     await harvestError(sql, itemId, reply.error_category, reply.error_detail);
   }
 
-  const audio_key = await synthCached(c.env, sql, tz, reply.reply_jp, await currentVoice(sql));
+  // A transient TTS failure must not discard the already-paid reply or (via client
+  // retry) double-bill + double-harvest — return the reply with a null key (P1/§4).
+  let audio_key: string | null = null;
+  try {
+    audio_key = await synthCached(c.env, sql, tz, reply.reply_jp, await currentVoice(sql));
+  } catch {
+    audio_key = null;
+  }
 
   return c.json({
     transcript,

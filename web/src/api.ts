@@ -87,8 +87,9 @@ export const api = {
     }
     return res.json() as Promise<{ grade: ShadowGrade; transcript: string }>;
   },
+  // POST: the opener has a paid, non-idempotent side effect (Sonnet on a cache miss).
   talkOpener: (itemId: string) =>
-    req<OpenerResponse>(`/talk/opener?item_id=${encodeURIComponent(itemId)}`),
+    req<OpenerResponse>(`/talk/opener?item_id=${encodeURIComponent(itemId)}`, { method: "POST" }),
   talk: async (itemId: string, audio: Blob, history: TalkTurn[]) => {
     const form = new FormData();
     form.append("item_id", itemId);

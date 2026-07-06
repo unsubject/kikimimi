@@ -28,7 +28,7 @@ describe("TTS content-address key (Sprint 4 refactor)", () => {
     );
   });
 
-  it("exposes a sane TTS length cap", () => {
-    expect(TTS_MAX_CHARS).toBeGreaterThanOrEqual(200);
+  it("pins the TTS length cap", () => {
+    expect(TTS_MAX_CHARS).toBe(400);
   });
 });
