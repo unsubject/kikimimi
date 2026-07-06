@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { hasToken, setToken } from "./api.js";
 import { Today } from "./views/Today.js";
 import { Drills } from "./views/Drills.js";
+import { Review } from "./views/Review.js";
 import { Settings } from "./views/Settings.js";
 import { registerServiceWorker } from "./push.js";
 
-type Tab = "today" | "drills" | "settings";
+type Tab = "today" | "review" | "drills" | "settings";
 
 export function App() {
   const [ready, setReady] = useState(hasToken());
@@ -25,12 +26,16 @@ export function App() {
       </header>
 
       {tab === "today" && <Today />}
+      {tab === "review" && <Review />}
       {tab === "drills" && <Drills />}
       {tab === "settings" && <Settings />}
 
       <nav className="tabbar">
         <button className={tab === "today" ? "on" : ""} onClick={() => setTab("today")}>
           <span className="ico">🎧</span>今日
+        </button>
+        <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>
+          <span className="ico">🔁</span>復習
         </button>
         <button className={tab === "drills" ? "on" : ""} onClick={() => setTab("drills")}>
           <span className="ico">あ</span>かな

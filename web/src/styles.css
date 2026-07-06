@@ -286,6 +286,55 @@ textarea {
   background: var(--danger);
   color: #2a120c;
 }
+
+/* FSRS rating buttons */
+.drill-choices button.rate-again {
+  background: #3a1f18;
+  color: #eaa189;
+}
+.drill-choices button.rate-hard {
+  background: #3a2f1a;
+  color: #e8c98a;
+}
+.drill-choices button.rate-good {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.drill-choices button.rate-easy {
+  background: var(--accent-2);
+  color: #10241a;
+}
+
+/* Voice recorder */
+.recorder {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+.recorder .rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--danger);
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.transcript {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  font-size: 15px;
+}
 label.field {
   display: block;
   margin: 14px 0;

@@ -3,6 +3,8 @@ import type {
   Item,
   UserSettings,
   TtsVoice,
+  ReviewQueueResponse,
+  SrsRating,
 } from "@kikimimi/shared";
 
 /**
@@ -61,6 +63,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ item_id: itemId, text }),
     }),
+  review: () => req<ReviewQueueResponse>("/review"),
+  gradeCard: (id: string, rating: SrsRating) =>
+    req<{ interval_days: number; due_at: string }>(`/review/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ rating }),
+    }),
+  explainBackVoice: async (itemId: string, audio: Blob) => {
+    const form = new FormData();
+    form.append("item_id", itemId);
+    form.append("audio", audio, "voice.webm");
+    const res = await fetch("/api/explain-back/voice", {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(body.error ?? "voice failed", res.status);
+    }
+    return res.json() as Promise<{
+      grade: { score: number; feedback: string; missed_points: string[] };
+      transcript: string;
+      transition: { action: string; toStage: number } | null;
+      cost: TodayResponse["cost"];
+    }>;
+  },
   settings: () => req<{ settings: UserSettings }>("/settings"),
   saveSettings: (s: Partial<UserSettings>) =>
     req<{ ok: boolean }>("/settings", { method: "PUT", body: JSON.stringify(s) }),

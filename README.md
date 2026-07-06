@@ -24,9 +24,18 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Cost governor | $1.50 soft warn, $2.00/day hard ceiling → degrade to no-LLM mode, $45/month breaker |
 | Scaffold graduation | S1→S2→S3 auto-graduation from measured performance, announced as an unlocked capability |
 
-Deferred per spec §6/§11: gamification (XP/levels), full FSRS SRS, conversation
-mode, long-read Library, Progress dashboard — the schema for them exists in
-`api/migrations/0001_init.sql` but v0.1 does not write those tables.
+## What ships in v0.2 (Sprint 2)
+
+| Area | Delivered |
+|------|-----------|
+| SRS engine | **FSRS-5** scheduler (`api/src/srs.ts`, unit-tested) — memory stability/difficulty per card, lateness handled natively (fits the streak-free system) |
+| Card harvesting | Item vocab auto-enters the deck as new cards; corrected mistakes become cloze cards from the error log |
+| Review surface | `復習` tab: due queue capped by the daily setting, recall-then-reveal, four FSRS ratings (もう一度/むずかしい/できた/かんたん) |
+| Voice explain-back | `🎤 声で説明` — MediaRecorder → Whisper (`whisper-1`, ja) → same grader; audio stored in R2, transcript shown |
+
+Deferred per spec §6/§11: gamification (XP/levels), conversation mode,
+long-read Library, Progress dashboard — the schema for them exists in
+`api/migrations/0001_init.sql` but is not yet written.
 
 ## Architecture
 
@@ -66,8 +75,8 @@ without pulling the SDK into the Worker bundle.
 
 ```bash
 npm install                 # installs all three workspaces
-npm test                    # api unit tests (governor, graduation, selection,
-                            #   feed parsing, and the web-push encrypt→decrypt round-trip)
+npm test                    # api unit tests (governor, graduation, FSRS scheduler,
+                            #   selection, feed parsing, web-push encrypt→decrypt round-trip)
 npm run typecheck           # shared + api + web (app & service worker)
 npm run build               # build the PWA + typecheck the Worker
 

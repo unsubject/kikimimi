@@ -6,6 +6,7 @@ import { synthesize } from "../tts.js";
 import { fetchSource, SOURCES, type Candidate } from "./sources.js";
 import { selectItem } from "./select.js";
 import { generateItem } from "./generate.js";
+import { harvestVocab } from "../cards.js";
 
 export interface PipelineOutcome {
   item: Item | null;
@@ -94,6 +95,9 @@ export async function runPipeline(
       ${level}, ${JSON.stringify(jlptProfile(gen.item.vocab))},
       ${gen.item.explain_back_prompt}, ${JSON.stringify(gen.item.probes)}, ${audioKey}
     ) returning *`;
+
+  // New vocab auto-enters the SRS deck as unlearned (spec §3.5, §5).
+  await harvestVocab(sql, String(row!.id), gen.item.vocab);
 
   // Deliver at the learner's current listening scaffold stage.
   const [ls] = await sql`select scaffold_stage from learner_state where skill = 'listening'`;

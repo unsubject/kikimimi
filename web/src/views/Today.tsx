@@ -3,6 +3,7 @@ import type { Item, ScaffoldStage, CostSummary } from "@kikimimi/shared";
 import { api, audioUrl, ApiError } from "../api.js";
 import { Player } from "../components/Player.js";
 import { RubyBody, stageLabel } from "../components/Ruby.js";
+import { useRecorder } from "../useRecorder.js";
 
 interface GradeState {
   score: number;
@@ -25,6 +26,8 @@ export function Today() {
   const [grading, setGrading] = useState(false);
   const [grade, setGrade] = useState<GradeState | null>(null);
   const [bursting, setBursting] = useState(false);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const recorder = useRecorder();
 
   const load = async () => {
     setLoading(true);
@@ -77,9 +80,34 @@ export function Today() {
     }
   };
 
+  const toggleRecording = async () => {
+    if (!item) return;
+    if (recorder.recording) {
+      const blob = await recorder.stop();
+      if (!blob) return;
+      setGrading(true);
+      setGrade(null);
+      setTranscript(null);
+      try {
+        const res = await api.explainBackVoice(item.id, blob);
+        setTranscript(res.transcript);
+        setGrade({ ...res.grade, transition: res.transition });
+        setCost(res.cost);
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : "音声採点に失敗しました。");
+      } finally {
+        setGrading(false);
+      }
+    } else {
+      setError(null);
+      await recorder.start();
+    }
+  };
+
   const resetItemState = () => {
     setAnswer("");
     setGrade(null);
+    setTranscript(null);
     setFuriOff(false);
   };
 
@@ -168,20 +196,37 @@ export function Today() {
               onChange={(e) => setAnswer(e.target.value)}
               placeholder="日本語で説明を書いてください…"
             />
-            <button
-              className="primary"
-              style={{ marginTop: 10 }}
-              onClick={submitExplainBack}
-              disabled={grading || !answer.trim() || cost?.degraded}
-            >
-              {grading ? "採点中…" : "採点する"}
-            </button>
+            <div className="row-inline" style={{ marginTop: 10 }}>
+              <button
+                className="primary"
+                onClick={submitExplainBack}
+                disabled={grading || !answer.trim() || cost?.degraded}
+              >
+                {grading ? "採点中…" : "テキストで採点"}
+              </button>
+              {recorder.supported && (
+                <button onClick={toggleRecording} disabled={grading || cost?.degraded}>
+                  {recorder.recording ? "⏹ 録音停止して採点" : "🎤 声で説明"}
+                </button>
+              )}
+            </div>
+            {recorder.recording && (
+              <div className="recorder">
+                <span className="rec-dot" /> 録音中…
+              </div>
+            )}
+            {recorder.error && <p className="muted" style={{ fontSize: 13 }}>{recorder.error}</p>}
             {cost?.degraded && (
               <p className="muted" style={{ fontSize: 13 }}>
                 本日のコスト上限に達したため、採点は深夜まで停止しています。
               </p>
             )}
 
+            {transcript && (
+              <div className="transcript">
+                <span className="muted" style={{ fontSize: 12 }}>文字起こし：</span> {transcript}
+              </div>
+            )}
             {grade && <GradeView grade={grade} />}
           </div>
 

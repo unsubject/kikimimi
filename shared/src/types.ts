@@ -95,6 +95,28 @@ export interface PushSubscriptionJSON {
   keys: { p256dh: string; auth: string };
 }
 
+// --- SRS / Review (spec §5) ---
+
+/** 1 = Again, 2 = Hard, 3 = Good, 4 = Easy. */
+export type SrsRating = 1 | 2 | 3 | 4;
+
+export type SrsCardType = "vocab" | "error_cloze";
+
+export interface ReviewCard {
+  id: string;
+  type: SrsCardType | string;
+  front: Record<string, unknown>;
+  back: Record<string, unknown>;
+  jlpt_level: string | null;
+  is_new: boolean;
+}
+
+export interface ReviewQueueResponse {
+  cards: ReviewCard[];
+  due_count: number;
+  cap: number;
+}
+
 // Cost governor constants (spec §10 — CONFIRMED)
 export const COST_SOFT_WARN_USD = 1.5;
 export const COST_HARD_CEILING_USD = 2.0;

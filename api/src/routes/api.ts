@@ -7,12 +7,18 @@ import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
 import { sendPush } from "../push.js";
 import { monthInZone } from "../time.js";
+import { dueCards, dueCount, gradeCard, harvestError } from "../cards.js";
+import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
 import type {
   ScaffoldStage,
   TodayResponse,
   PushSubscriptionJSON,
+  ReviewQueueResponse,
+  SrsRating,
 } from "@kikimimi/shared";
 import { TTS_VOICES } from "@kikimimi/shared";
+
+const isRating = (n: unknown): n is SrsRating => n === 1 || n === 2 || n === 3 || n === 4;
 
 type Vars = { sql: ReturnType<typeof openDb> };
 
@@ -134,12 +140,108 @@ api.post("/explain-back", async (c) => {
     await sql`
       insert into error_log (category, detail, item_id)
       values (${grade.error_category}, ${grade.error_detail}, ${body.item_id})`;
+    // A corrected mistake becomes an SRS cloze card (spec §5, §8).
+    await harvestError(sql, body.item_id, grade.error_category, grade.error_detail);
   }
 
   // Explain-back is the listening comprehension signal → drives graduation.
   const transition = await recordScore(sql, "listening", grade.score);
 
   return c.json({ grade, transition, cost: summarize(await readSpend(sql, tz)) });
+});
+
+/**
+ * Voice explain-back (spec §4): multipart upload of a recorded answer →
+ * Whisper transcription → same grader → learner-model update. Stores the audio
+ * in R2 and the transcript alongside.
+ */
+api.post("/explain-back/voice", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+
+  const form = await c.req.formData();
+  const itemId = String(form.get("item_id") ?? "");
+  const entry = form.get("audio");
+  if (!itemId || !entry || typeof entry === "string") {
+    return c.json({ error: "item_id and audio required" }, 400);
+  }
+  // workers-types under-types FormData file entries; it is a Blob at runtime.
+  const blob = entry as unknown as Blob;
+
+  const [item] = await sql`select * from items where id = ${itemId}`;
+  if (!item) return c.json({ error: "not found" }, 404);
+
+  const audio = await blob.arrayBuffer();
+  const mime = blob.type || "audio/webm";
+  const voiceKey = `voice/${crypto.randomUUID()}.${mime.includes("webm") ? "webm" : "ogg"}`;
+  await c.env.AUDIO.put(voiceKey, audio, { httpMetadata: { contentType: mime } });
+
+  const { text: transcript } = await transcribe(c.env, audio, mime);
+  await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
+
+  const [resp] = await sql`
+    insert into responses (item_id, mode, voice_r2_key, transcript)
+    values (${itemId}, 'explain_back_voice', ${voiceKey}, ${transcript})
+    returning id`;
+
+  const { grade, usd } = await gradeExplainBack(
+    c.env,
+    {
+      script_jp: String(item.script_jp),
+      gist_zh: String(item.gist_zh ?? ""),
+      explain_back_prompt: String(item.explain_back_prompt ?? ""),
+    },
+    transcript,
+  );
+  await logCost(sql, tz, "explain_back_grade", usd);
+
+  await sql`
+    insert into evaluations (response_id, score, missed_points, feedback, model)
+    values (${resp!.id}, ${grade.score}, ${JSON.stringify(grade.missed_points)},
+            ${grade.feedback}, ${c.env.GRADING_MODEL})`;
+
+  if (grade.error_category && grade.error_detail) {
+    await sql`
+      insert into error_log (category, detail, item_id)
+      values (${grade.error_category}, ${grade.error_detail}, ${itemId})`;
+    await harvestError(sql, itemId, grade.error_category, grade.error_detail);
+  }
+
+  const transition = await recordScore(sql, "listening", grade.score);
+
+  return c.json({
+    grade,
+    transcript,
+    transition,
+    cost: summarize(await readSpend(sql, tz)),
+  });
+});
+
+/** Review queue: due FSRS cards up to the daily cap (spec §5). */
+api.get("/review", async (c) => {
+  const sql = c.get("sql");
+  const [s] = await sql`select srs_daily_cap from user_settings where id = 1`;
+  const cap = Number(s?.srs_daily_cap ?? 20);
+  const [cards, count] = await Promise.all([dueCards(sql, cap), dueCount(sql)]);
+  const body: ReviewQueueResponse = { cards, due_count: count, cap };
+  return c.json(body);
+});
+
+/** Grade one review card (1=Again 2=Hard 3=Good 4=Easy) → advance FSRS state. */
+api.post("/review/:id", async (c) => {
+  const sql = c.get("sql");
+  const body = await c.req.json<{ rating: number }>();
+  if (!isRating(body.rating)) {
+    return c.json({ error: "rating must be 1-4" }, 400);
+  }
+  const result = await gradeCard(sql, c.req.param("id"), body.rating);
+  if (!result) return c.json({ error: "not found" }, 404);
+  return c.json(result);
 });
 
 /** Burst: generate the next-ranked item on demand ("More" button). */
