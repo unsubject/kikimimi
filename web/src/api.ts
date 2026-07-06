@@ -5,6 +5,8 @@ import type {
   TtsVoice,
   ReviewQueueResponse,
   SrsRating,
+  OnyomiRule,
+  ShadowGrade,
 } from "@kikimimi/shared";
 
 /**
@@ -63,6 +65,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ item_id: itemId, text }),
     }),
+  onyomi: () => req<{ rules: OnyomiRule[] }>("/onyomi"),
+  seedOnyomi: () => req<{ added: number }>("/onyomi/seed", { method: "POST" }),
+  shadow: async (targetText: string, audio: Blob) => {
+    const form = new FormData();
+    form.append("target_text", targetText);
+    form.append("audio", audio, "shadow.webm");
+    const res = await fetch("/api/shadow", {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(body.error ?? "shadow failed", res.status);
+    }
+    return res.json() as Promise<{ grade: ShadowGrade; transcript: string }>;
+  },
   review: () => req<ReviewQueueResponse>("/review"),
   gradeCard: (id: string, rating: SrsRating) =>
     req<{ interval_days: number; due_at: string }>(`/review/${id}`, {

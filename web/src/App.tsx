@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { hasToken, setToken } from "./api.js";
 import { Today } from "./views/Today.js";
-import { Drills } from "./views/Drills.js";
+import { Practice } from "./views/Practice.js";
 import { Review } from "./views/Review.js";
 import { Settings } from "./views/Settings.js";
 import { registerServiceWorker } from "./push.js";
 
-type Tab = "today" | "review" | "drills" | "settings";
+type Tab = "today" | "review" | "practice" | "settings";
 
 export function App() {
   const [ready, setReady] = useState(hasToken());
@@ -27,7 +27,7 @@ export function App() {
 
       {tab === "today" && <Today />}
       {tab === "review" && <Review />}
-      {tab === "drills" && <Drills />}
+      {tab === "practice" && <Practice />}
       {tab === "settings" && <Settings />}
 
       <nav className="tabbar">
@@ -37,8 +37,8 @@ export function App() {
         <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>
           <span className="ico">🔁</span>復習
         </button>
-        <button className={tab === "drills" ? "on" : ""} onClick={() => setTab("drills")}>
-          <span className="ico">あ</span>かな
+        <button className={tab === "practice" ? "on" : ""} onClick={() => setTab("practice")}>
+          <span className="ico">あ</span>練習
         </button>
         <button className={tab === "settings" ? "on" : ""} onClick={() => setTab("settings")}>
           <span className="ico">⚙</span>設定

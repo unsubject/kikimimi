@@ -129,6 +129,7 @@ export function Review() {
 
 function renderFront(card: ReviewCard): string {
   if (card.type === "vocab") return String(card.front.word ?? "");
+  if (card.type === "onyomi") return String(card.front.hanzi ?? "");
   return String(card.front.prompt ?? "この項目を思い出してください");
 }
 
@@ -137,6 +138,13 @@ function renderBack(card: ReviewCard): string {
     const reading = card.back.reading ? `${card.back.reading}` : "";
     const meaning = card.back.meaning_zh ? ` — ${card.back.meaning_zh}` : "";
     return `${reading}${meaning}`;
+  }
+  if (card.type === "onyomi") {
+    // hanzi (Cantonese) → on'yomi kana + which correspondence rule
+    const canton = card.front.cantonese ? `${card.front.cantonese} → ` : "";
+    const kana = card.back.kana ? String(card.back.kana) : "";
+    const pattern = card.back.pattern ? ` （${card.back.pattern}）` : "";
+    return `${canton}${kana}${pattern}`;
   }
   return String(card.back.note ?? "");
 }

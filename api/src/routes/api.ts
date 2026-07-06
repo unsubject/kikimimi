@@ -7,8 +7,10 @@ import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
 import { sendPush } from "../push.js";
 import { monthInZone } from "../time.js";
-import { dueCards, dueCount, gradeCard, harvestError } from "../cards.js";
+import { dueCards, dueCount, gradeCard, harvestError, harvestOnyomi } from "../cards.js";
 import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
+import { gradeShadowing } from "../shadow.js";
+import { ONYOMI_RULES } from "../content/onyomi.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -325,4 +327,49 @@ api.post("/push/test", async (c) => {
     ),
   );
   return c.json({ sent: results.length, results });
+});
+
+/** Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). */
+api.get("/onyomi", (c) => c.json({ rules: ONYOMI_RULES }));
+
+/** Seed the on'yomi correspondence pack into the SRS deck (idempotent). */
+api.post("/onyomi/seed", async (c) => {
+  const sql = c.get("sql");
+  const added = await harvestOnyomi(sql);
+  return c.json({ added });
+});
+
+/**
+ * Shadowing attempt (spec §4): multipart target_text + audio → Whisper → grade
+ * on morae/long-vowel/gemination. Feeds the speaking skill's trailing scores.
+ */
+api.post("/shadow", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+
+  const summary = summarize(await readSpend(sql, tz));
+  if (summary.degraded || summary.monthly_breaker) {
+    return c.json({ error: "cost_limited", cost: summary }, 402);
+  }
+
+  const form = await c.req.formData();
+  const targetText = String(form.get("target_text") ?? "").trim();
+  const entry = form.get("audio");
+  if (!targetText || !entry || typeof entry === "string") {
+    return c.json({ error: "target_text and audio required" }, 400);
+  }
+  const blob = entry as unknown as Blob;
+  const audio = await blob.arrayBuffer();
+  const mime = blob.type || "audio/webm";
+
+  const { text: transcript } = await transcribe(c.env, audio, mime);
+  await logCost(sql, tz, "whisper", WHISPER_FLAT_USD);
+
+  const { grade, usd } = await gradeShadowing(c.env, targetText, transcript);
+  await logCost(sql, tz, "shadow_grade", usd);
+
+  // Shadowing accuracy is a speaking/phonology signal.
+  const transition = await recordScore(sql, "speaking", grade.score);
+
+  return c.json({ grade, transcript, transition, cost: summarize(await readSpend(sql, tz)) });
 });
