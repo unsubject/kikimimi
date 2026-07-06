@@ -59,7 +59,7 @@ export class ApiError extends Error {
 export const api = {
   config: () => req<{ vapidPublicKey: string; voices: TtsVoice[] }>("/config"),
   today: () => req<TodayResponse>("/today"),
-  items: () => req<{ items: Item[] }>("/items"),
+  items: (offset = 0) => req<{ items: Item[] }>(`/items?offset=${offset}`),
   more: () => req<{ item: Item }>("/more", { method: "POST" }),
   explainBack: (itemId: string, text: string) =>
     req<{

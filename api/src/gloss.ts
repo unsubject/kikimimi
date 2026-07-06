@@ -21,7 +21,11 @@ const GLOSS_SCHEMA: JsonSchema = {
   required: ["word", "reading", "meaning_zh", "jlpt"],
   properties: {
     word: { type: "string", description: "The dictionary (lemma) form of the word." },
-    reading: { type: "string", description: "Kana reading of the word in this context." },
+    reading: {
+      type: "string",
+      description:
+        "Kana reading of the returned dictionary form (word), so word/reading form a consistent saved-card pair.",
+    },
     meaning_zh: { type: "string", description: "Concise Chinese gloss (a few words)." },
     jlpt: { type: "string", enum: ["N5", "N4", "N3", "N2", "N1"] },
   },

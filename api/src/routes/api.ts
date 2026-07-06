@@ -127,16 +127,20 @@ api.get("/today", async (c) => {
   return c.json(body);
 });
 
-/** Library: past items (metadata only for v0.1). */
+/** Library: past items (metadata only). Offset-paginated so the Library can
+ * page through *all* past items (spec §5), not just the newest 30. */
 api.get("/items", async (c) => {
   const sql = c.get("sql");
+  // Clamp query params so a malformed/huge ?limit can't blow up the query.
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 30, 1), 100);
+  const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
   const rows = await sql`
     select i.*, d.stage, d.delivered_at
     from items i left join lateral (
       select stage, delivered_at from deliveries d
       where d.item_id = i.id order by delivered_at desc limit 1
     ) d on true
-    order by i.created_at desc limit 30`;
+    order by i.created_at desc limit ${limit} offset ${offset}`;
   return c.json({ items: rows.map((r) => rowToItem(r)) });
 });
 
@@ -384,18 +388,19 @@ api.post("/push/test", async (c) => {
  */
 api.post("/gloss", async (c) => {
   const sql = c.get("sql");
-  const tz = await TZ(sql);
   const { word, context } = await c.req.json<{ word: string; context?: string }>();
   const w = (word ?? "").trim();
   if (!w) return c.json({ error: "word required" }, 400);
   if (w.length > 40) return c.json({ error: "word too long" }, 400);
 
+  // Cached by surface form; return the stored lemma as `word` so add-to-SRS
+  // saves the dictionary form, not the inflected surface (P3).
   const [cached] = await sql`
-    select reading, meaning_zh, jlpt from glosses where word = ${w}`;
+    select reading, meaning_zh, jlpt, lemma from glosses where word = ${w}`;
   if (cached) {
     return c.json({
       gloss: {
-        word: w,
+        word: cached.lemma ? String(cached.lemma) : w,
         reading: String(cached.reading),
         meaning_zh: String(cached.meaning_zh),
         jlpt: cached.jlpt ? String(cached.jlpt) : "N3",
@@ -404,16 +409,22 @@ api.post("/gloss", async (c) => {
     });
   }
 
+  // Only a cache miss is billed, so read tz (a user_settings query) lazily here (P7).
+  const tz = await TZ(sql);
   const gated = await budgetGate(c, sql, tz);
   if (gated) return gated;
 
-  const { gloss, usd } = await glossWord(c.env, w, context ?? "");
+  // Defensively cap the context — the client sends one sentence, but bound it
+  // regardless so a runaway payload can't inflate per-tap token cost (P2).
+  const ctx = (context ?? "").slice(0, 400);
+  const { gloss, usd } = await glossWord(c.env, w, ctx);
   await logCost(sql, tz, "gloss", usd);
   await sql`
-    insert into glosses (word, reading, meaning_zh, jlpt)
-    values (${w}, ${gloss.reading}, ${gloss.meaning_zh}, ${gloss.jlpt})
+    insert into glosses (word, lemma, reading, meaning_zh, jlpt)
+    values (${w}, ${gloss.word}, ${gloss.reading}, ${gloss.meaning_zh}, ${gloss.jlpt})
     on conflict (word) do nothing`;
-  return c.json({ gloss: { ...gloss, word: w }, cached: false });
+  // gloss.word is the model's lemma → returning it makes /gloss/save store the lemma (P3).
+  return c.json({ gloss, cached: false });
 });
 
 /** Add a tapped/glossed word to the SRS deck as a vocab card (spec §5). */

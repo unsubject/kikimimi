@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
-import type { Item, FuriganaSegment, Gloss } from "@kikimimi/shared";
+import { useEffect, useRef, useState } from "react";
+import type { Item, Gloss } from "@kikimimi/shared";
 import { api, audioUrl, ApiError } from "../api.js";
 import { Player } from "../components/Player.js";
+import { RubyBody } from "../components/Ruby.js";
+
+// Server /items default page size; a full page implies there may be more (P4).
+const PAGE = 30;
 
 /**
  * Library (spec §5; learning plan Sprint 5). Past items become long reads: the
@@ -13,15 +17,34 @@ export function Library() {
   const [items, setItems] = useState<Item[]>([]);
   const [open, setOpen] = useState<Item | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api
       .items()
-      .then((r) => setItems(r.items))
+      .then((r) => {
+        setItems(r.items);
+        setHasMore(r.items.length === PAGE);
+      })
       .catch((e) => setError(e instanceof ApiError ? e.message : "読み込み失敗"))
       .finally(() => setLoading(false));
   }, []);
+
+  // Page through the rest of the archive: offset = how many we already hold.
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const r = await api.items(items.length);
+      setItems((prev) => [...prev, ...r.items]);
+      setHasMore(r.items.length === PAGE);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "読み込み失敗");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   if (loading) return <p className="muted">読み込み中…</p>;
   if (error) return <div className="banner stop">{error}</div>;
@@ -50,6 +73,15 @@ export function Library() {
           <div style={{ fontSize: 17, marginTop: 6 }}>{it.title_jp}</div>
         </button>
       ))}
+      {hasMore && (
+        <button
+          style={{ display: "block", width: "100%" }}
+          onClick={loadMore}
+          disabled={loadingMore}
+        >
+          {loadingMore ? "読み込み中…" : "もっと見る"}
+        </button>
+      )}
     </div>
   );
 }
@@ -61,23 +93,32 @@ function LongRead({ item, onBack }: { item: Item; onBack: () => void }) {
   const [glossBusy, setGlossBusy] = useState(false);
   const [glossErr, setGlossErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [zhOpen, setZhOpen] = useState(false);
+  // Generation counter: only the newest tap may write gloss state, so out-of-
+  // order resolutions can't show/save the wrong word (P1).
+  const reqId = useRef(0);
 
   const tapWord = async (word: string) => {
     const w = word.trim();
     if (!w) return;
+    const my = ++reqId.current;
     setTapped(w);
     setGloss(null);
     setGlossErr(null);
     setSaved(false);
     setGlossBusy(true);
     try {
-      const res = await api.gloss(w, item.script_jp);
+      // Send only the sentence containing the tap, not the whole script — bounds
+      // per-tap token cost on a cache miss (P2, spec §10).
+      const res = await api.gloss(w, sentenceOf(item.script_jp, w));
+      if (my !== reqId.current) return;
       setGloss(res.gloss);
     } catch (e) {
+      if (my !== reqId.current) return;
       setGlossErr(e instanceof ApiError ? e.message : "意味を取得できませんでした。");
     } finally {
-      setGlossBusy(false);
+      // Clear busy only if we're still the latest request (a stale one must not
+      // reset the flag for a newer in-flight tap).
+      if (my === reqId.current) setGlossBusy(false);
     }
   };
 
@@ -109,9 +150,9 @@ function LongRead({ item, onBack }: { item: Item; onBack: () => void }) {
           </button>
         </div>
 
-        <TappableBody segments={item.furigana} furiOff={furiOff} onTap={tapWord} />
+        <RubyBody segments={item.furigana} furiOff={furiOff} onTap={tapWord} />
 
-        <details className="zh-reveal" open={zhOpen} onToggle={(e) => setZhOpen(e.currentTarget.open)}>
+        <details className="zh-reveal">
           <summary>中文の要旨（tap-to-reveal）</summary>
           <div className="zh">{item.gist_zh}</div>
         </details>
@@ -147,31 +188,11 @@ function LongRead({ item, onBack }: { item: Item; onBack: () => void }) {
   );
 }
 
-/** Render the body with tappable word runs. Kanji runs (with ruby) are the
- * meaningful words; kana runs are still tappable for particles/verbs. */
-function TappableBody({
-  segments,
-  furiOff,
-  onTap,
-}: {
-  segments: FuriganaSegment[];
-  furiOff: boolean;
-  onTap: (word: string) => void;
-}) {
-  return (
-    <p className={`jp-body long-read${furiOff ? " furi-hidden" : ""}`}>
-      {segments.map((seg, i) =>
-        seg.ruby ? (
-          <ruby key={i} className="tap-word" onClick={() => onTap(seg.text)}>
-            {seg.text}
-            <rt>{seg.ruby}</rt>
-          </ruby>
-        ) : (
-          <span key={i} className="tap-word" onClick={() => onTap(seg.text)}>
-            {seg.text}
-          </span>
-        ),
-      )}
-    </p>
-  );
+/** Isolate the sentence containing the tapped word to send as gloss context —
+ * split on Japanese enders (。！？), keeping the ender; fall back to the whole
+ * script if no sentence matches (P2). */
+function sentenceOf(script: string, word: string): string {
+  const sentences = script.split(/(?<=[。！？])/);
+  const hit = sentences.find((s) => s.includes(word));
+  return (hit ?? script).trim();
 }
