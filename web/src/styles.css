@@ -335,6 +335,22 @@ textarea {
   border-radius: 10px;
   font-size: 15px;
 }
+
+/* Library long-read: tappable words */
+.long-read .tap-word {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.long-read .tap-word:hover,
+.long-read .tap-word:active {
+  background: rgba(232, 163, 61, 0.22);
+}
+.gloss-pop {
+  position: sticky;
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  border: 1px solid var(--accent);
+}
 label.field {
   display: block;
   margin: 14px 0;

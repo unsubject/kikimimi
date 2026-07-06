@@ -10,6 +10,8 @@ import type {
   OpenerResponse,
   TalkResponse,
   TalkTurn,
+  Gloss,
+  GlossResponse,
 } from "@kikimimi/shared";
 
 /**
@@ -106,6 +108,10 @@ export const api = {
     }
     return res.json() as Promise<TalkResponse>;
   },
+  gloss: (word: string, context: string) =>
+    req<GlossResponse>("/gloss", { method: "POST", body: JSON.stringify({ word, context }) }),
+  saveGloss: (g: Gloss) =>
+    req<{ added: number }>("/gloss/save", { method: "POST", body: JSON.stringify(g) }),
   review: () => req<ReviewQueueResponse>("/review"),
   gradeCard: (id: string, rating: SrsRating) =>
     req<{ interval_days: number; due_at: string }>(`/review/${id}`, {

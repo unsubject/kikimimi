@@ -50,9 +50,17 @@ Release milestones v0.1–v1.0 map 1:1 to that plan's Sprints 1–6.
 | Error recycling | Conversation mistakes feed the error log + spawn SRS cloze cards, same as explain-back |
 | TTS reuse | The v0.3 TTS cache is factored into `api/src/ttscache.ts` and reused for opener/reply audio (content-addressed in R2, synthesized at most once) |
 
-Deferred per spec §6/§11: gamification (XP/levels), long-read Library,
-Progress dashboard — the schema for them exists in
-`api/migrations/0001_init.sql` but is not yet written.
+## What ships in v0.5 (Sprint 5)
+
+| Area | Delivered |
+|------|-----------|
+| Library | `文庫` tab: every past item as a long read — full text, furigana toggle, source link, re-listen player |
+| Word-tap gloss | Tap any word → Yomitan-style pop-up (reading + Chinese meaning behind tap-reveal + JLPT). Cache-checked in a `glosses` table (`0002_glosses.sql`) so repeat taps are free; a miss calls the grading model once (governor-gated) |
+| Add-to-SRS | From a gloss, one tap adds the word to the FSRS deck as a vocab card (deduped) |
+
+Deferred per spec §6/§11: gamification (XP/levels), Progress dashboard,
+Work Gallery, listening-gauntlet — schema exists in
+`api/migrations/0001_init.sql`, shipping in v1.0.
 
 ## Architecture
 

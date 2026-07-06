@@ -7,12 +7,20 @@ import { gradeExplainBack } from "../grade.js";
 import { recordScore } from "../learner.js";
 import { sendPush } from "../push.js";
 import { monthInZone } from "../time.js";
-import { dueCards, dueCount, gradeCard, harvestError, harvestOnyomi } from "../cards.js";
+import {
+  dueCards,
+  dueCount,
+  gradeCard,
+  harvestError,
+  harvestOnyomi,
+  harvestVocab,
+} from "../cards.js";
 import { transcribe, WHISPER_FLAT_USD } from "../stt.js";
 import { gradeShadowing } from "../shadow.js";
 import { ONYOMI_RULES } from "../content/onyomi.js";
 import { synthCached, currentVoice, TTS_MAX_CHARS } from "../ttscache.js";
 import { conversationOpener, conversationTurn } from "../converse.js";
+import { glossWord } from "../gloss.js";
 import type {
   ScaffoldStage,
   TodayResponse,
@@ -367,6 +375,64 @@ api.post("/push/test", async (c) => {
     ),
   );
   return c.json({ sent: results.length, results });
+});
+
+/**
+ * Word-tap gloss for the Library long-read (spec §5). Cache-checked by the
+ * tapped surface form so repeat taps are free; a miss calls the grading model
+ * once (governor-gated) and caches the result.
+ */
+api.post("/gloss", async (c) => {
+  const sql = c.get("sql");
+  const tz = await TZ(sql);
+  const { word, context } = await c.req.json<{ word: string; context?: string }>();
+  const w = (word ?? "").trim();
+  if (!w) return c.json({ error: "word required" }, 400);
+  if (w.length > 40) return c.json({ error: "word too long" }, 400);
+
+  const [cached] = await sql`
+    select reading, meaning_zh, jlpt from glosses where word = ${w}`;
+  if (cached) {
+    return c.json({
+      gloss: {
+        word: w,
+        reading: String(cached.reading),
+        meaning_zh: String(cached.meaning_zh),
+        jlpt: cached.jlpt ? String(cached.jlpt) : "N3",
+      },
+      cached: true,
+    });
+  }
+
+  const gated = await budgetGate(c, sql, tz);
+  if (gated) return gated;
+
+  const { gloss, usd } = await glossWord(c.env, w, context ?? "");
+  await logCost(sql, tz, "gloss", usd);
+  await sql`
+    insert into glosses (word, reading, meaning_zh, jlpt)
+    values (${w}, ${gloss.reading}, ${gloss.meaning_zh}, ${gloss.jlpt})
+    on conflict (word) do nothing`;
+  return c.json({ gloss: { ...gloss, word: w }, cached: false });
+});
+
+/** Add a tapped/glossed word to the SRS deck as a vocab card (spec §5). */
+api.post("/gloss/save", async (c) => {
+  const sql = c.get("sql");
+  const b = await c.req.json<{ word: string; reading: string; meaning_zh?: string; jlpt?: string }>();
+  if (!b.word?.trim() || !b.reading?.trim()) {
+    return c.json({ error: "word and reading required" }, 400);
+  }
+  const jlpt = (["N5", "N4", "N3", "N2", "N1"].includes(b.jlpt ?? "") ? b.jlpt : "N3") as
+    | "N5"
+    | "N4"
+    | "N3"
+    | "N2"
+    | "N1";
+  const added = await harvestVocab(sql, "manual", [
+    { word: b.word.trim(), reading: b.reading.trim(), meaning_zh: b.meaning_zh ?? "", jlpt },
+  ]);
+  return c.json({ added });
 });
 
 /** Cantonese→on'yomi cheat sheet (Sprint 3 deliverable). */
