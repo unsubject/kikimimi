@@ -80,9 +80,11 @@ export async function gradeExplainBack(
     maxTokens: 1024,
   });
 
-  // Forced tool use does not hard-enforce the schema's 0-100 bound, so clamp
-  // before the score reaches evaluations / pass-fail / the learner model.
+  // Forced tool use does not hard-enforce the schema's 0-100 bound (or even that
+  // score is a number), so clamp AND coerce a non-finite value to 0 before it
+  // reaches evaluations / pass-fail / the learner model (NaN would poison all three).
   const grade = result.data;
-  grade.score = Math.max(0, Math.min(100, Math.round(grade.score)));
+  const s = Number(grade.score);
+  grade.score = Number.isFinite(s) ? Math.max(0, Math.min(100, Math.round(s))) : 0;
   return { grade, usd: result.usd };
 }

@@ -22,9 +22,13 @@ app.route("/api", api);
  */
 app.get("/audio/:key{.+}", async (c) => {
   const token = c.req.query("t") ?? "";
-  const ok = isAudioToken(token)
-    ? await verifyAudioToken(c.env.APP_TOKEN, token)
-    : !!c.env.APP_TOKEN && timingSafeEqual(token, c.env.APP_TOKEN);
+  // Fail closed if APP_TOKEN is unset (also keeps verifyAudioToken from ever
+  // importing a zero-length HMAC key).
+  const ok =
+    !!c.env.APP_TOKEN &&
+    (isAudioToken(token)
+      ? await verifyAudioToken(c.env.APP_TOKEN, token)
+      : timingSafeEqual(token, c.env.APP_TOKEN));
   if (!ok) return c.text("unauthorized", 401);
   const key = c.req.param("key");
   const obj = await c.env.AUDIO.get(key);

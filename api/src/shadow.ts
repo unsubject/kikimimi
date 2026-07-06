@@ -58,8 +58,10 @@ export async function gradeShadowing(
     schema: SHADOW_SCHEMA,
     maxTokens: 512,
   });
-  // Clamp: the schema's 0-100 bound is a hint, not a guarantee (forced tool use).
+  // Clamp + coerce: the schema's 0-100 bound (and that score is a number) is a
+  // hint, not a guarantee (forced tool use); a non-finite value becomes 0.
   const grade = result.data;
-  grade.score = Math.max(0, Math.min(100, Math.round(grade.score)));
+  const s = Number(grade.score);
+  grade.score = Number.isFinite(s) ? Math.max(0, Math.min(100, Math.round(s))) : 0;
   return { grade, usd: result.usd };
 }

@@ -26,9 +26,12 @@ export async function harvestVocab(
   let added = 0;
   for (const v of vocab) {
     // Normalize the surface form so " 行く" and "行く" don't create two cards
-    // (the dedup below is an exact string match, like /gloss/save).
-    const word = v.word.trim();
+    // (the dedup below is an exact string match, like /gloss/save). Type-guard
+    // the un-enforced model output so a malformed entry skips rather than throws
+    // (this runs after the item/delivery commit — a throw here can't be undone).
+    const word = typeof v.word === "string" ? v.word.trim() : "";
     if (!word) continue;
+    const reading = typeof v.reading === "string" ? v.reading.trim() : "";
     const [existing] = await sql`
       select 1 from srs_cards
       where type = 'vocab' and front->>'word' = ${word} limit 1`;
@@ -38,7 +41,7 @@ export async function harvestVocab(
       values (
         'vocab',
         ${JSON.stringify({ word })},
-        ${JSON.stringify({ reading: v.reading.trim(), meaning_zh: v.meaning_zh })},
+        ${JSON.stringify({ reading, meaning_zh: v.meaning_zh })},
         ${v.jlpt}, ${itemId}, ${JSON.stringify({ status: "new" })}, now()
       )`;
     added += 1;

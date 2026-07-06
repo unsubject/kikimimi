@@ -57,9 +57,11 @@ export async function recordScore(
   const scores: number[] = Array.isArray(state.trailing_scores)
     ? (state.trailing_scores as number[])
     : [];
-  // Clamp: the grading model's `score` is not hard-validated by forced tool use,
-  // so a stray >100 / negative value must not poison the learner model.
-  scores.push(Math.max(0, Math.min(100, Math.round(score))));
+  // Clamp + coerce: the grading model's `score` is not hard-validated by forced
+  // tool use, so a stray >100 / negative / non-finite value must not poison the
+  // learner model (NaN would serialize to null → read back as 0 in the mean).
+  const s = Number(score);
+  scores.push(Number.isFinite(s) ? Math.max(0, Math.min(100, Math.round(s))) : 0);
   const trimmed = scores.slice(-10);
 
   const stage = Number(state.scaffold_stage) as ScaffoldStage;

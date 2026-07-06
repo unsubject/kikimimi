@@ -26,7 +26,11 @@ const API_VERSION = "2023-06-01";
 /** Transient upstream statuses worth a retry (overload / rate limit / gateway). */
 const RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 const MAX_ATTEMPTS = 3;
-const REQUEST_TIMEOUT_MS = 30_000;
+/** Default per-attempt deadline. Grading calls are small and fast; generation
+ * (up to 8192 tokens, non-streaming) needs a much longer one — see DEFAULT vs
+ * the `timeoutMs` opt — otherwise a long-but-healthy generation would abort and
+ * get retried, wasting the daily drop and billing each aborted attempt. */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -35,7 +39,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * failures (429/5xx/529 and network/timeout errors). Without this, one upstream
  * hiccup at 07:00 silently loses the entire daily drop until the next cron.
  */
-async function postWithRetry(env: Env, body: unknown): Promise<Response> {
+async function postWithRetry(env: Env, body: unknown, timeoutMs: number): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) await sleep(400 * 2 ** (attempt - 1)); // 400ms, 800ms
@@ -48,7 +52,7 @@ async function postWithRetry(env: Env, body: unknown): Promise<Response> {
           "anthropic-version": API_VERSION,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS - 1) continue;
       return res;
@@ -108,6 +112,7 @@ export async function generateStructured<T>(
     toolDescription: string;
     schema: JsonSchema;
     maxTokens?: number;
+    timeoutMs?: number;
   },
 ): Promise<StructuredResult<T>> {
   const body = {
@@ -126,7 +131,7 @@ export async function generateStructured<T>(
     messages: [{ role: "user", content: opts.prompt }],
   };
 
-  const res = await postWithRetry(env, body);
+  const res = await postWithRetry(env, body, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   if (!res.ok) {
     const detail = await res.text();

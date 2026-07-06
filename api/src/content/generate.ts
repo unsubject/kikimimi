@@ -149,6 +149,10 @@ export async function generateItem(
     // vocab/gist/probes can exceed 4096 output tokens at higher levels, and a
     // truncated tool call is now a hard error (see generateStructured).
     maxTokens: 8192,
+    // A long, non-streaming 8192-token generation can run well past the default
+    // 30s grading timeout; give it room so a healthy generation isn't aborted
+    // and retried (which would waste the drop and bill each aborted attempt).
+    timeoutMs: 120_000,
   });
 
   return {
