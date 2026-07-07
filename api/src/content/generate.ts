@@ -155,9 +155,31 @@ export async function generateItem(
     timeoutMs: 120_000,
   });
 
-  return {
-    item: result.data,
-    usd: result.usd,
-    chars: result.data.script_jp.length,
-  };
+  // Forced tool use guides but does not enforce shapes. Coerce the array fields
+  // (and the script) so a model that returns e.g. a stringified array can't be
+  // double-encoded into jsonb — which would read back as a string and crash the
+  // client's `.map` — and so harvestVocab/jlptProfile never iterate a string.
+  const item = result.data;
+  item.script_jp = String(item.script_jp ?? "");
+  item.vocab = toArray(item.vocab) as VocabEntry[];
+  item.furigana = toArray(item.furigana) as FuriganaSegment[];
+  item.grammar_tags = toArray(item.grammar_tags) as string[];
+  item.probes = toArray(item.probes) as string[];
+
+  return { item, usd: result.usd, chars: item.script_jp.length };
+}
+
+/** Best-effort coercion to an array: passes arrays through, parses a JSON-string
+ * array, and treats anything else as empty (the model's output is not schema-enforced). */
+function toArray(v: unknown): unknown[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v) as unknown;
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }

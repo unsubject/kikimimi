@@ -123,6 +123,38 @@ function jlptProfile(vocab: { jlpt: string }[]): Record<string, number> {
   return profile;
 }
 
+/**
+ * A jsonb array field that may come back as a JSON *string* (e.g. a model that
+ * returned a stringified array, which then got double-encoded into jsonb). Parse
+ * it back so the client always receives a real array and never `.map`-crashes.
+ */
+export function toJsonArray(v: unknown): unknown[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v) as unknown;
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Same, for a jsonb object field that may arrive as a JSON string. */
+export function toJsonObject(v: unknown): Record<string, unknown> {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v) as unknown;
+      return p && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export function rowToItem(row: Record<string, unknown>): Item {
   return {
     id: String(row.id),
@@ -131,14 +163,14 @@ export function rowToItem(row: Record<string, unknown>): Item {
     category: row.category as Item["category"],
     title_jp: String(row.title_jp),
     script_jp: String(row.script_jp),
-    furigana: (row.furigana as Item["furigana"]) ?? [],
+    furigana: toJsonArray(row.furigana) as Item["furigana"],
     gist_zh: String(row.gist_zh ?? ""),
-    vocab: (row.vocab as Item["vocab"]) ?? [],
-    grammar_tags: (row.grammar_tags as string[]) ?? [],
+    vocab: toJsonArray(row.vocab) as Item["vocab"],
+    grammar_tags: toJsonArray(row.grammar_tags) as string[],
     level: Number(row.level ?? 1),
-    jlpt_profile: (row.jlpt_profile as Record<string, number>) ?? {},
+    jlpt_profile: toJsonObject(row.jlpt_profile) as Record<string, number>,
     explain_back_prompt: String(row.explain_back_prompt ?? ""),
-    probes: (row.probes as string[]) ?? [],
+    probes: toJsonArray(row.probes) as string[],
     audio_r2_key: row.audio_r2_key ? String(row.audio_r2_key) : null,
     created_at:
       row.created_at instanceof Date
