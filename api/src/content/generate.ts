@@ -55,7 +55,7 @@ const GENERATION_SCHEMA: JsonSchema = {
     gist_zh: {
       type: "string",
       description:
-        "2-3 sentence Chinese gist. Names of people/places stay in original Japanese.",
+        "2-3 sentence gist in Traditional Chinese (繁體中文, never Simplified). Names of people/places stay in original Japanese.",
     },
     vocab: {
       type: "array",
@@ -67,7 +67,10 @@ const GENERATION_SCHEMA: JsonSchema = {
         properties: {
           word: { type: "string" },
           reading: { type: "string", description: "Hiragana/katakana reading." },
-          meaning_zh: { type: "string", description: "Concise Chinese gloss." },
+          meaning_zh: {
+            type: "string",
+            description: "Concise gloss in Traditional Chinese (繁體中文, never Simplified).",
+          },
           jlpt: { type: "string", enum: ["N5", "N4", "N3", "N2", "N1"] },
         },
       },
@@ -117,7 +120,8 @@ export async function generateItem(
     "You are the content engine for a listening-first Japanese immersion app for one advanced-beginner learner. " +
     "The learner is a native Cantonese/Chinese speaker who sight-reads kanji but is building listening from zero. " +
     "You turn a real Japan news item into a short, spoken-style Japanese micro-podcast script and its study scaffold. " +
-    "Write natural, spoken Japanese. Keep the Chinese gist minimal — it is hidden behind tap-to-reveal and must never become a reading crutch.";
+    "Write natural, spoken Japanese. Keep the Chinese gist minimal — it is hidden behind tap-to-reveal and must never become a reading crutch. " +
+    "All Chinese you write (the gist and every vocab meaning) MUST be Traditional Chinese (繁體中文) — never Simplified.";
 
   // The headline/summary are UNTRUSTED feed text. Bound their length (cost +
   // token safety) and fence them so the model treats them as source data, not

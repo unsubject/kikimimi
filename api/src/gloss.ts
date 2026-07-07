@@ -26,7 +26,10 @@ const GLOSS_SCHEMA: JsonSchema = {
       description:
         "Kana reading of the returned dictionary form (word), so word/reading form a consistent saved-card pair.",
     },
-    meaning_zh: { type: "string", description: "Concise Chinese gloss (a few words)." },
+    meaning_zh: {
+      type: "string",
+      description: "Concise gloss in Traditional Chinese (繁體中文, never Simplified) — a few words.",
+    },
     jlpt: { type: "string", enum: ["N5", "N4", "N3", "N2", "N1"] },
   },
 };
@@ -43,7 +46,7 @@ export async function glossWord(
 ): Promise<GlossResult> {
   const system =
     "You are a Japanese→Chinese pop-up dictionary for a Cantonese-native learner. " +
-    "Given a word tapped in a sentence, return its dictionary form, reading, a concise Chinese gloss, and JLPT level. Disambiguate by the sentence.";
+    "Given a word tapped in a sentence, return its dictionary form, reading, a concise gloss in Traditional Chinese (繁體中文, never Simplified), and JLPT level. Disambiguate by the sentence.";
 
   const prompt =
     `Sentence:\n${context}\n\nTapped word: ${word}\n\nGloss it.`;
