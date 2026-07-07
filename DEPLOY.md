@@ -50,10 +50,25 @@ and an OpenAI API key.
 
 1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Import a
    repository** → authorize GitHub and select **`unsubject/kikimimi`**.
-2. Set the build settings:
-   - **Build command:** `npm ci && npm run build`
-   - **Deploy command:** `npx wrangler deploy -c api/wrangler.jsonc`
-   - Root directory: repository root (default).
+2. Set the build settings **exactly** as below. This is an npm-workspaces
+   monorepo, so Cloudflare must target the app subfolder (`api/`, where
+   `wrangler.jsonc` lives) as the project, while the build climbs back to the
+   repo root to build everything:
+
+   | Setting | Value |
+   |---------|-------|
+   | **Root directory** | `api` |
+   | **Build command** | `cd .. && npm ci && npm run build` |
+   | **Deploy command** | `npx wrangler deploy` |
+
+   - **Root = `api`** so Cloudflare's deploy detection finds one specific Worker.
+     Pointing it at the repo root fails with *"application detection … run in the
+     root of a workspace … target a specific project"*.
+   - **Build** steps up to the repo root to install the whole workspace and build
+     the PWA into `web/dist` (which `wrangler.jsonc`'s `assets.directory:
+     ../web/dist` then picks up).
+   - **Deploy** runs inside `api/`, so `npx wrangler deploy` finds
+     `api/wrangler.jsonc` with no `-c` flag.
 3. Create / deploy. The R2 binding, the Hyperdrive binding, and the hourly cron
    trigger are all read from `api/wrangler.jsonc` automatically.
 
