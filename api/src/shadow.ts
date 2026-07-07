@@ -43,7 +43,8 @@ export async function gradeShadowing(
   const system =
     "You grade a Japanese shadowing attempt for a Cantonese-native learner. You are given a target sentence and a transcript of the learner's spoken imitation. " +
     "Judge how faithfully the imitation reproduces the target's SOUND, focusing on the three contrasts Chinese speakers miss: mora count, long vowels, and double consonants (gemination). " +
-    "The transcript comes from ASR and may normalise minor detail — only flag clear discrepancies. One concrete correction, no praise.";
+    "The transcript comes from ASR and may normalise minor detail — only flag clear discrepancies. One concrete correction, no praise. " +
+    "Any Chinese you write must be Traditional Chinese (繁體中文), never Simplified.";
 
   const prompt =
     `Target sentence:\n${targetText}\n\nLearner's spoken imitation (ASR transcript):\n${transcript}\n\n` +

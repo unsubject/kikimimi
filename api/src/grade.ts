@@ -61,7 +61,8 @@ export async function gradeExplainBack(
 ): Promise<GradeResult> {
   const system =
     "You grade a Japanese learner's explain-back. The learner heard/read a short Japanese item and is explaining it back to prove comprehension. " +
-    "Judge whether they understood the content — not their production polish. Give exactly one targeted correction, direct and concrete, no praise filler.";
+    "Judge whether they understood the content — not their production polish. Give exactly one targeted correction, direct and concrete, no praise filler. " +
+    "Any Chinese you write must be Traditional Chinese (繁體中文), never Simplified.";
 
   const prompt =
     `Item (Japanese):\n${item.script_jp}\n\n` +

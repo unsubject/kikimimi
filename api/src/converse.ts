@@ -87,7 +87,8 @@ const CONVERSATION_SYSTEM =
   "Speak plain, functional です/ます-level Japanese at their level (NOT casual 常体, NOT keigo) — simple sentences, common words. This is listening-first practice: your turns will be read aloud by TTS. " +
   "Be direct and concrete, with zero cheerleading filler — no praise like 上手ですね, only natural 相槌. " +
   "Give at most ONE correction per turn, concrete and specific; if their Japanese was fine, give none. " +
-  "Recognise and tag any 尊敬語/謙譲語 for their awareness, but keep your own speech plain です/ます. Always end your reply with a question.";
+  "Recognise and tag any 尊敬語/謙譲語 for their awareness, but keep your own speech plain です/ます. Always end your reply with a question. " +
+  "Any Chinese you write must be Traditional Chinese (繁體中文), never Simplified.";
 
 /** The bot's opening question about today's item. */
 export async function conversationOpener(
